@@ -7,7 +7,9 @@ final class ConfigService: ObservableObject {
     private let configURL: URL
 
     init() {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory())
+                .appendingPathComponent("Library/Application Support", isDirectory: true)
         let appFolder = appSupport.appendingPathComponent("Agent-Blackbox", isDirectory: true)
         try? FileManager.default.createDirectory(at: appFolder, withIntermediateDirectories: true, attributes: nil)
         configURL = appFolder.appendingPathComponent("config.json")
