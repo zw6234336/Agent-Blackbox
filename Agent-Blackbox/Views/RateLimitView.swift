@@ -7,10 +7,20 @@ struct RateLimitView: View {
 
     @State private var editingProvider: LLMProvider? = nil
 
+    private var riskCount: Int {
+        tracker.snapshots.filter { $0.overallSeverity != .normal }.count
+    }
+
+    private var configuredWindowCount: Int {
+        tracker.snapshots.reduce(0) { $0 + $1.windows.count }
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 header
+
+                overviewStrip
 
                 if let g = tracker.globalSnapshot, !g.windows.isEmpty {
                     GlobalSummaryCard(snapshot: g)
@@ -47,28 +57,88 @@ struct RateLimitView: View {
     }
 
     private var header: some View {
-        HStack(alignment: .firstTextBaseline) {
-            VStack(alignment: .leading, spacing: 4) {
+        HStack(alignment: .top, spacing: 16) {
+            VStack(alignment: .leading, spacing: 6) {
                 Text("速率与配额")
                     .font(.system(size: 28, weight: .bold, design: .rounded))
-                Text("RPM · TPM · 日预算 · 月预算 · 并发")
+                Text("RPM、TPM、预算和并发集中展示，快速判断哪个 Provider 接近上限。")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
+
             Spacer()
-            HStack(spacing: 6) {
-                Circle().fill(Color.successGreen).frame(width: 6, height: 6)
-                Text("更新于 \(tracker.updatedAt.formattedRelative)")
-                    .font(.caption)
+
+            VStack(alignment: .trailing, spacing: 10) {
+                HStack(spacing: 6) {
+                    Circle().fill(Color.successGreen).frame(width: 6, height: 6)
+                    Text("更新于 \(tracker.updatedAt.formattedRelative)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Button {
+                    tracker.refresh()
+                } label: {
+                    Label("刷新", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+    }
+
+    private var overviewStrip: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 12)], spacing: 12) {
+            overviewCard(
+                title: "Provider",
+                value: "\(tracker.snapshots.count)",
+                subtitle: "正在统计",
+                icon: "shippingbox.fill",
+                color: .accentGradientStart
+            )
+            overviewCard(
+                title: "风险项",
+                value: "\(riskCount)",
+                subtitle: "接近或达到上限",
+                icon: riskCount > 0 ? "exclamationmark.triangle.fill" : "checkmark.seal.fill",
+                color: riskCount > 0 ? .warningOrange : .successGreen
+            )
+            overviewCard(
+                title: "限额窗口",
+                value: "\(configuredWindowCount)",
+                subtitle: "已配置总数",
+                icon: "slider.horizontal.3",
+                color: .infoBlue
+            )
+            overviewCard(
+                title: "全局并发",
+                value: "\(tracker.globalSnapshot?.concurrency.currentInFlight ?? 0)",
+                subtitle: "当前进行中",
+                icon: "arrow.triangle.branch",
+                color: .accentGradientEnd
+            )
+        }
+    }
+
+    private func overviewCard(title: String, value: String, subtitle: String, icon: String, color: Color) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.title3)
+                .foregroundStyle(color)
+                .frame(width: 28)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(value)
+                    .font(.system(size: 22, weight: .bold, design: .rounded))
+                Text(title)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                Text(subtitle)
+                    .font(.caption2)
                     .foregroundStyle(.secondary)
             }
-            Button {
-                tracker.refresh()
-            } label: {
-                Image(systemName: "arrow.clockwise")
-            }
-            .buttonStyle(.borderless)
+            Spacer()
         }
+        .cardStyle()
     }
 
     private var emptyState: some View {
@@ -104,13 +174,13 @@ private struct GlobalSummaryCard: View {
                 SeverityBadge(severity: snapshot.overallSeverity)
             }
 
-            HStack(spacing: 24) {
-                summaryItem(title: "1小时请求", value: "\(snapshot.totalCalls1h)")
-                summaryItem(title: "1小时 Token", value: snapshot.totalTokens1h.formattedCompact)
-                summaryItem(title: "今日费用", value: snapshot.totalCost24h.formattedCurrency)
-                summaryItem(title: "当前并发", value: "\(snapshot.concurrency.currentInFlight)")
-                summaryItem(title: "1分钟峰值并发", value: "\(snapshot.concurrency.peakLastMinute)")
-                Spacer()
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 12)], spacing: 12) {
+                summaryItem(title: "1小时请求", value: "\(snapshot.totalCalls1h)", icon: "paperplane.fill")
+                summaryItem(title: "1小时 Token", value: snapshot.totalTokens1h.formattedCompact, icon: "textformat.abc")
+                summaryItem(title: "今日费用", value: snapshot.totalCost24h.formattedCurrency, icon: "dollarsign.circle.fill")
+                summaryItem(title: "当前并发", value: "\(snapshot.concurrency.currentInFlight)", icon: "arrow.triangle.branch")
+                summaryItem(title: "1分钟峰值并发", value: "\(snapshot.concurrency.peakLastMinute)", icon: "waveform.path.ecg")
+                summaryItem(title: "1小时峰值并发", value: "\(snapshot.concurrency.peakLastHour)", icon: "chart.line.uptrend.xyaxis")
             }
 
             ForEach(snapshot.windows) { w in
@@ -120,11 +190,22 @@ private struct GlobalSummaryCard: View {
         .cardStyle()
     }
 
-    private func summaryItem(title: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(value).font(.system(size: 18, weight: .semibold, design: .rounded))
-            Text(title).font(.caption2).foregroundStyle(.secondary)
+    private func summaryItem(title: String, value: String, icon: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Image(systemName: icon)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.system(size: 18, weight: .semibold, design: .rounded))
+            Text(title)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(Color.primary.opacity(0.04))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 }
 
@@ -150,12 +231,18 @@ private struct ProviderUsageCard: View {
                 .help("编辑此 Provider 的限额")
             }
 
-            // 并发条
-            HStack(spacing: 16) {
-                concurrencyChip("当前并发", value: "\(snapshot.concurrency.currentInFlight)", systemImage: "arrow.triangle.branch")
-                concurrencyChip("1m 峰值", value: "\(snapshot.concurrency.peakLastMinute)", systemImage: "waveform.path.ecg")
-                concurrencyChip("1h 峰值", value: "\(snapshot.concurrency.peakLastHour)", systemImage: "chart.line.uptrend.xyaxis")
-                concurrencyChip("平均时长", value: snapshot.concurrency.avgDurationSeconds.formattedDuration, systemImage: "clock")
+            VStack(alignment: .leading, spacing: 10) {
+                Text("并发概览")
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .foregroundStyle(.secondary)
+
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 10)], spacing: 10) {
+                    concurrencyChip("当前并发", value: "\(snapshot.concurrency.currentInFlight)", systemImage: "arrow.triangle.branch")
+                    concurrencyChip("1m 峰值", value: "\(snapshot.concurrency.peakLastMinute)", systemImage: "waveform.path.ecg")
+                    concurrencyChip("1h 峰值", value: "\(snapshot.concurrency.peakLastHour)", systemImage: "chart.line.uptrend.xyaxis")
+                    concurrencyChip("平均时长", value: snapshot.concurrency.avgDurationSeconds.formattedDuration, systemImage: "clock")
+                }
             }
 
             Divider()
@@ -164,6 +251,17 @@ private struct ProviderUsageCard: View {
                 Text("此 Provider 未配置任何限额")
                     .font(.caption).foregroundStyle(.secondary)
             } else {
+                HStack {
+                    Text("限额进度")
+                        .font(.caption)
+                        .fontWeight(.medium)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text("共 \(snapshot.windows.count) 项")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+
                 ForEach(snapshot.windows) { window in
                     RateWindowBar(
                         window: window,
@@ -192,6 +290,10 @@ private struct ProviderUsageCard: View {
             }
             Text(value).font(.system(size: 14, weight: .semibold, design: .rounded))
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(Color.primary.opacity(0.04))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 }
 
@@ -202,26 +304,28 @@ struct RateWindowBar: View {
     let pace: UsagePace?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(window.kind.displayName)
-                    .font(.caption)
-                    .fontWeight(.medium)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(window.kind.displayName)
+                        .font(.caption)
+                        .fontWeight(.medium)
+                    Text(formatUsed())
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
-                Text(formatUsed())
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
                 Text(String(format: "%.0f%%", window.usedPercent))
-                    .font(.caption2.monospacedDigit())
-                    .fontWeight(.semibold)
+                    .font(.caption.monospacedDigit())
+                    .fontWeight(.bold)
                     .foregroundStyle(color)
             }
 
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
-                    Capsule()
+                    RoundedRectangle(cornerRadius: 7)
                         .fill(Color.primary.opacity(0.08))
-                    Capsule()
+                    RoundedRectangle(cornerRadius: 7)
                         .fill(color.gradient)
                         .frame(width: max(2, geo.size.width * CGFloat(window.usedPercent / 100)))
 
@@ -234,7 +338,7 @@ struct RateWindowBar: View {
                     }
                 }
             }
-            .frame(height: 10)
+            .frame(height: 12)
 
             HStack(spacing: 6) {
                 if let resetDesc = window.resetDescription {
@@ -242,12 +346,18 @@ struct RateWindowBar: View {
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
+                Spacer()
+                Text("剩余 \(formatRemaining())")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
                 if let pace {
-                    Spacer()
                     paceTag(pace)
                 }
             }
         }
+        .padding(10)
+        .background(Color.primary.opacity(0.035))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
     private func formatUsed() -> String {
@@ -258,6 +368,17 @@ struct RateWindowBar: View {
             return "\(Int(window.usedAmount).formattedCompact) / \(Int(window.limitAmount).formattedCompact) tok"
         default:
             return "\(Int(window.usedAmount)) / \(Int(window.limitAmount)) \(window.unit)"
+        }
+    }
+
+    private func formatRemaining() -> String {
+        switch window.unit {
+        case "USD":
+            return window.remainingAmount.formattedCurrency
+        case "tok":
+            return "\(Int(window.remainingAmount).formattedCompact) tok"
+        default:
+            return "\(Int(window.remainingAmount)) \(window.unit)"
         }
     }
 
