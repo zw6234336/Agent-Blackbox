@@ -11,10 +11,12 @@ struct ContentView: View {
             List(selection: $selectedTab) {
                 Label("监控", systemImage: "eye")
                     .tag(0)
-                Label("日志", systemImage: "doc.text")
+                Label("位置与交互", systemImage: "map")
                     .tag(1)
-                Label("统计", systemImage: "chart.bar")
+                Label("日志", systemImage: "doc.text")
                     .tag(2)
+                Label("统计", systemImage: "chart.bar")
+                    .tag(3)
             }
             .navigationTitle("Agent Blackbox")
         } detail: {
@@ -23,8 +25,10 @@ struct ContentView: View {
                 case 0:
                     MonitorView()
                 case 1:
-                    LogListView()
+                    LogLocationView()
                 case 2:
+                    LogListView()
+                case 3:
                     StatisticsView()
                 default:
                     Text("选择一个视图")
