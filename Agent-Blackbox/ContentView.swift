@@ -37,8 +37,8 @@ struct ContentView: View {
                 Label("产品对比", systemImage: "square.grid.2x2")
                     .tag(Tab.comparison)
             }
-            .navigationTitle("保险决策助手")
             .listStyle(.sidebar)
+            .navigationTitle("保险决策助手")
         } detail: {
             Group {
                 switch selectedTab {
