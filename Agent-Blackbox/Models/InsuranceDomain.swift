@@ -441,7 +441,8 @@ struct KnowledgeCard: Identifiable {
 }
 
 /// Formats amounts for the current Chinese-language prototype UI.
-/// Values above 10,000 use the Chinese "万" unit because the product copy and sample data are localized for that market.
+/// Amounts below 10,000 are returned as "N 元" (for example, "5000 元").
+/// Amounts at or above 10,000 are returned as "N 万" or "N.N 万" (for example, "1.5 万").
 func formatInsuranceAmountCN(_ amount: Int) -> String {
     if amount >= 10_000 {
         let wan = Double(amount) / 10_000

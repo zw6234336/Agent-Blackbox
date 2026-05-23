@@ -439,7 +439,7 @@ private struct DashboardSummaryCard: View {
         SoftCard(
             background: AnyShapeStyle(
                 LinearGradient(
-                    colors: [Color.white, InsurancePalette.primary.opacity(0.10)],
+                    colors: [Color.white, InsurancePalette.primary.opacity(0.1)],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 )

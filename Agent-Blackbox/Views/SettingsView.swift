@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct SettingsView: View {
-    private static let designPrincipleDescription = "界面默认先展示结论、缺口和行动建议，不再以监控状态、底层日志或工程化配置为主。"
+    private static let designDescription = "界面默认先展示结论、缺口和行动建议，不再以监控状态、底层日志或工程化配置为主。"
     private let workspace = InsuranceWorkspaceData.sample
 
     var body: some View {
@@ -32,7 +32,7 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("产品设计原则")
                         .font(.headline)
-                    Text(Self.designPrincipleDescription)
+                    Text(Self.designDescription)
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 }

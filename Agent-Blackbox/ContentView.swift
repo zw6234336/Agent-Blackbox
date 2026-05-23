@@ -9,12 +9,23 @@ struct ContentView: View {
         case comparison
     }
 
-    @State private var selectedTab: Tab? = .dashboard // Optional selection is required by sidebar List selection on macOS.
+    @State private var selectedTab: Tab = .dashboard
     private let workspace = InsuranceWorkspaceData.sample
+
+    private var sidebarSelection: Binding<Tab?> {
+        Binding(
+            get: { selectedTab },
+            set: { newValue in
+                if let newValue {
+                    selectedTab = newValue
+                }
+            }
+        )
+    }
 
     var body: some View {
         NavigationSplitView {
-            List(selection: $selectedTab) {
+            List(selection: sidebarSelection) {
                 Label("总览", systemImage: "house")
                     .tag(Tab.dashboard)
                 Label("我的保障", systemImage: "person.2")
@@ -30,7 +41,7 @@ struct ContentView: View {
             .listStyle(.sidebar)
         } detail: {
             Group {
-                switch selectedTab ?? .dashboard {
+                switch selectedTab {
                 case .dashboard:
                     InsuranceDashboardView(workspace: workspace)
                 case .coverage:
