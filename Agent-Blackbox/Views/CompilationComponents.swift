@@ -100,6 +100,11 @@ struct NewCompilationSheet: View {
     @State private var hasEndDate = false
     @State private var bookmarkedOnly = false
     @State private var availableProviders: [LLMProvider] = []
+    @FocusState private var focusedField: Field?
+
+    private enum Field: Hashable {
+        case name, description
+    }
 
     var body: some View {
         VStack(spacing: 16) {
@@ -108,9 +113,11 @@ struct NewCompilationSheet: View {
 
             TextField("名称", text: $name)
                 .textFieldStyle(.roundedBorder)
+                .focused($focusedField, equals: .name)
 
             TextField("描述（可选）", text: $description)
                 .textFieldStyle(.roundedBorder)
+                .focused($focusedField, equals: .description)
 
             // Output format
             HStack {
@@ -200,6 +207,9 @@ struct NewCompilationSheet: View {
         .frame(width: 450, height: 480)
         .onAppear {
             availableProviders = database.fetchDistinctProviders()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                focusedField = .name
+            }
         }
     }
 }

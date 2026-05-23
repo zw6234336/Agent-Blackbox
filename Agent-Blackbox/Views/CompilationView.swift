@@ -7,6 +7,18 @@ struct CompilationView: View {
     @State private var showNewSheet = false
     @State private var previewContent: String?
 
+    // New compilation form state (inline, same pattern as CollectionView)
+    @State private var newName = ""
+    @State private var newDesc = ""
+    @State private var newFormat: CompilationOutputFormat = .markdown
+    @State private var newProviders: Set<String> = []
+    @State private var newHasStartDate = false
+    @State private var newHasEndDate = false
+    @State private var newStartDate = Date().addingTimeInterval(-7 * 86400)
+    @State private var newEndDate = Date()
+    @State private var newBookmarkedOnly = false
+    @State private var availableProviders: [LLMProvider] = []
+
     var body: some View {
         NavigationSplitView {
             sidebar
@@ -17,28 +29,9 @@ struct CompilationView: View {
                 emptyState
             }
         }
-        .sheet(isPresented: $showNewSheet) {
-            NewCompilationSheet(
-                onCreate: { comp in
-                    compilationService.initializeIfNeeded()
-                    let created = compilationService.createCompilation(
-                        name: comp.name,
-                        description: comp.description,
-                        format: comp.outputFormat,
-                        providers: comp.providerFilters.compactMap { LLMProvider(rawValue: $0) },
-                        startDate: comp.startDate,
-                        endDate: comp.endDate,
-                        bookmarkedOnly: comp.bookmarkedOnly
-                    )
-                    showNewSheet = false
-                    selectedCompilation = created
-                    compilationService.startGeneration(id: created.id)
-                },
-                onCancel: { showNewSheet = false }
-            )
-        }
         .onAppear {
             compilationService.initializeIfNeeded()
+            availableProviders = database.fetchDistinctProviders()
         }
     }
 
@@ -125,6 +118,9 @@ struct CompilationView: View {
             }
             .buttonStyle(.plain)
             .padding()
+            .popover(isPresented: $showNewSheet, arrowEdge: .trailing) {
+                newCompilationForm
+            }
         }
     }
 
@@ -148,6 +144,122 @@ struct CompilationView: View {
             .buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // MARK: - New Compilation Form (inline, like CollectionView)
+
+    private var newCompilationForm: some View {
+        VStack(spacing: 14) {
+            Text("新建编译")
+                .font(.headline)
+
+            TextField("名称", text: $newName)
+                .textFieldStyle(.roundedBorder)
+
+            TextField("描述（可选）", text: $newDesc)
+                .textFieldStyle(.roundedBorder)
+
+            HStack {
+                Text("输出格式")
+                    .foregroundStyle(.secondary)
+                    .frame(width: 70, alignment: .leading)
+                Picker("", selection: $newFormat) {
+                    ForEach(CompilationOutputFormat.allCases) { fmt in
+                        Text(fmt.displayName).tag(fmt)
+                    }
+                }
+                .pickerStyle(.segmented)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("供应商筛选")
+                    .foregroundStyle(.secondary)
+                    .font(.caption)
+                FlowLayout(spacing: 6) {
+                    ForEach(availableProviders, id: \.rawValue) { provider in
+                        FilterChip(
+                            label: provider.displayName,
+                            isSelected: newProviders.contains(provider.rawValue),
+                            color: provider.brandColor
+                        ) {
+                            if newProviders.contains(provider.rawValue) {
+                                newProviders.remove(provider.rawValue)
+                            } else {
+                                newProviders.insert(provider.rawValue)
+                            }
+                        }
+                    }
+                }
+            }
+
+            HStack {
+                Toggle("起始日期", isOn: $newHasStartDate)
+                    .toggleStyle(.checkbox)
+                if newHasStartDate {
+                    DatePicker("", selection: $newStartDate, displayedComponents: .date)
+                        .labelsHidden()
+                }
+            }
+
+            HStack {
+                Toggle("截止日期", isOn: $newHasEndDate)
+                    .toggleStyle(.checkbox)
+                if newHasEndDate {
+                    DatePicker("", selection: $newEndDate, displayedComponents: .date)
+                        .labelsHidden()
+                }
+            }
+
+            Toggle("仅收藏日志", isOn: $newBookmarkedOnly)
+                .toggleStyle(.checkbox)
+
+            Spacer()
+
+            HStack {
+                Button("取消") {
+                    showNewSheet = false
+                    resetForm()
+                }
+                .keyboardShortcut(.cancelAction)
+
+                Spacer()
+
+                Button("创建") {
+                    createCompilation()
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(newName.isEmpty)
+            }
+        }
+        .padding()
+        .frame(width: 420, height: 460)
+    }
+
+    private func resetForm() {
+        newName = ""
+        newDesc = ""
+        newFormat = .markdown
+        newProviders = []
+        newHasStartDate = false
+        newHasEndDate = false
+        newBookmarkedOnly = false
+    }
+
+    private func createCompilation() {
+        compilationService.initializeIfNeeded()
+        let created = compilationService.createCompilation(
+            name: newName,
+            description: newDesc,
+            format: newFormat,
+            providers: newProviders.compactMap { LLMProvider(rawValue: $0) },
+            startDate: newHasStartDate ? newStartDate : nil,
+            endDate: newHasEndDate ? newEndDate : nil,
+            bookmarkedOnly: newBookmarkedOnly
+        )
+        showNewSheet = false
+        resetForm()
+        selectedCompilation = created
+        compilationService.startGeneration(id: created.id)
     }
 
     // MARK: - Detail View
