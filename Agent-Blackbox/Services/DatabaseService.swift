@@ -184,6 +184,68 @@ final class DatabaseService: ObservableObject {
         logs = newLogs
     }
 
+    // MARK: - Trend / Stats queries
+
+    func fetchStats(from startDate: Date, to endDate: Date) -> LogStats {
+        guard let db else {
+            return LogStats(totalCount: 0, errorCount: 0, totalTokens: 0, activeModels: 0)
+        }
+        let startTs = startDate.timeIntervalSince1970
+        let endTs = endDate.timeIntervalSince1970
+        let range = logsTable.filter(timestamp >= startTs && timestamp <= endTs)
+        do {
+            let total = try db.scalar(range.count)
+            let errors = try db.scalar(
+                range.filter(errorMessage != nil && (errorMessage ?? "") != "").count
+            )
+            let totalTokens = (try db.scalar(range.select(tokensUsed.sum))) ?? 0
+            let modelRows = try db.prepare(range.select(modelName).filter(modelName != nil))
+            let models = Set(modelRows.compactMap { $0[modelName] })
+            return LogStats(
+                totalCount: total,
+                errorCount: errors,
+                totalTokens: totalTokens,
+                activeModels: models.count
+            )
+        } catch {
+            Logger.shared.error("统计数据查询失败: \(error.localizedDescription)")
+            return LogStats(totalCount: 0, errorCount: 0, totalTokens: 0, activeModels: 0)
+        }
+    }
+
+    func fetchTrend(from startDate: Date, to endDate: Date, bucketCount: Int = 24) -> [TrendPoint] {
+        guard let db else { return [] }
+        let startTs = startDate.timeIntervalSince1970
+        let endTs = endDate.timeIntervalSince1970
+        guard endTs > startTs, bucketCount > 0 else { return [] }
+        let bucketInterval = (endTs - startTs) / Double(bucketCount)
+        let range = logsTable.filter(timestamp >= startTs && timestamp <= endTs)
+        do {
+            let rows = try db.prepare(range.select(timestamp, errorMessage))
+            var counts = Array(repeating: 0, count: bucketCount)
+            var errorCounts = Array(repeating: 0, count: bucketCount)
+            for row in rows {
+                let t = row[timestamp]
+                let idx = Int((t - startTs) / bucketInterval)
+                guard idx >= 0 && idx < bucketCount else { continue }
+                counts[idx] += 1
+                if let err = row[errorMessage], !err.isEmpty {
+                    errorCounts[idx] += 1
+                }
+            }
+            return (0..<bucketCount).map { i in
+                TrendPoint(
+                    date: Date(timeIntervalSince1970: startTs + Double(i) * bucketInterval),
+                    count: counts[i],
+                    errorCount: errorCounts[i]
+                )
+            }
+        } catch {
+            Logger.shared.error("趋势数据查询失败: \(error.localizedDescription)")
+            return []
+        }
+    }
+
     private func updateCountersFromDatabase() {
         guard let db else {
             totalLogCount = logs.count
@@ -226,4 +288,20 @@ enum ExportFormat: String, CaseIterable, Identifiable {
         case .json: return "json"
         }
     }
+}
+
+struct LogStats {
+    let totalCount: Int
+    let errorCount: Int
+    let totalTokens: Int
+    let activeModels: Int
+}
+
+struct TrendPoint: Identifiable {
+    let id: UUID = UUID()
+    let date: Date
+    let count: Int
+    let errorCount: Int
+
+    var normalCount: Int { max(0, count - errorCount) }
 }
