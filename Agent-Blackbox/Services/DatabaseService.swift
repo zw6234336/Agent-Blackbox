@@ -73,21 +73,7 @@ final class DatabaseService: ObservableObject {
         guard let db else { return [] }
 
         do {
-            return try db.prepare(logsTable.order(timestamp.desc).limit(limit, offset: offset)).compactMap { row in
-                let metadataData = row[metadataJSON].data(using: .utf8) ?? Data("{}".utf8)
-                let metadata = (try? JSONSerialization.jsonObject(with: metadataData) as? [String: String]) ?? [:]
-                return ParsedLog(
-                    id: UUID(uuidString: row[id]) ?? UUID(),
-                    timestamp: Date(timeIntervalSince1970: row[timestamp]),
-                    sourceFile: row[sourceFile],
-                    modelName: row[modelName],
-                    prompt: row[prompt],
-                    response: row[response],
-                    tokensUsed: row[tokensUsed],
-                    errorMessage: row[errorMessage],
-                    metadata: metadata
-                )
-            }
+            return try db.prepare(logsTable.order(timestamp.desc).limit(limit, offset: offset)).map(rowToParsedLog)
         } catch {
             Logger.shared.error("日志查询失败: \(error.localizedDescription)")
             return []
@@ -95,17 +81,27 @@ final class DatabaseService: ObservableObject {
     }
 
     func searchLogs(query: String) -> [ParsedLog] {
-        fetchLogs(limit: 10_000, offset: 0).filter { log in
-            log.modelName?.localizedCaseInsensitiveContains(query) == true ||
-            log.prompt?.localizedCaseInsensitiveContains(query) == true ||
-            log.response?.localizedCaseInsensitiveContains(query) == true ||
-            log.sourceFile.localizedCaseInsensitiveContains(query)
+        guard let db else { return [] }
+        let like = "%\(query)%"
+
+        do {
+            let queryTable = logsTable
+                .filter(
+                    sourceFile.like(like) ||
+                    (modelName ?? "").like(like) ||
+                    (prompt ?? "").like(like) ||
+                    (response ?? "").like(like)
+                )
+                .order(timestamp.desc)
+            return try db.prepare(queryTable).map(rowToParsedLog)
+        } catch {
+            Logger.shared.error("日志搜索失败: \(error.localizedDescription)")
+            return []
         }
     }
 
     func exportLogs(format: ExportFormat) -> URL? {
-        let logs = fetchLogs(limit: 10_000, offset: 0)
-        guard !logs.isEmpty else { return nil }
+        guard let db else { return nil }
 
         let fileManager = FileManager.default
         let exportFolder = Self.defaultDatabaseURL.deletingLastPathComponent().appendingPathComponent("Exports", isDirectory: true)
@@ -115,18 +111,34 @@ final class DatabaseService: ObservableObject {
         let fileURL = exportFolder.appendingPathComponent(filename)
 
         do {
-            let data: Data
+            FileManager.default.createFile(atPath: fileURL.path, contents: nil)
+            let handle = try FileHandle(forWritingTo: fileURL)
+            defer { try? handle.close() }
+
+            let rows = try db.prepare(logsTable.order(timestamp.desc))
             switch format {
             case .json:
-                data = try JSONEncoder.pretty.encode(logs)
-            case .csv:
-                var csv = "id,timestamp,sourceFile,modelName,tokensUsed,errorMessage\n"
-                for log in logs {
-                    csv += "\(log.id.uuidString),\(log.timestamp.timeIntervalSince1970),\(escapeCSV(log.sourceFile)),\(escapeCSV(log.modelName ?? "")),\(log.tokensUsed.map(String.init) ?? ""),\(escapeCSV(log.errorMessage ?? ""))\n"
+                try handle.write(contentsOf: Data("[".utf8))
+                var first = true
+                for row in rows {
+                    let log = rowToParsedLog(row)
+                    let encoded = try JSONEncoder.pretty.encode(log)
+                    if first {
+                        first = false
+                    } else {
+                        try handle.write(contentsOf: Data(",".utf8))
+                    }
+                    try handle.write(contentsOf: encoded)
                 }
-                data = Data(csv.utf8)
+                try handle.write(contentsOf: Data("]".utf8))
+            case .csv:
+                try handle.write(contentsOf: Data("id,timestamp,sourceFile,modelName,tokensUsed,errorMessage\n".utf8))
+                for row in rows {
+                    let log = rowToParsedLog(row)
+                    let line = "\(log.id.uuidString),\(log.timestamp.timeIntervalSince1970),\(escapeCSV(log.sourceFile)),\(escapeCSV(log.modelName ?? "")),\(log.tokensUsed.map(String.init) ?? ""),\(escapeCSV(log.errorMessage ?? ""))\n"
+                    try handle.write(contentsOf: Data(line.utf8))
+                }
             }
-            try data.write(to: fileURL, options: .atomic)
             return fileURL
         } catch {
             Logger.shared.error("日志导出失败: \(error.localizedDescription)")
@@ -137,6 +149,22 @@ final class DatabaseService: ObservableObject {
     private func escapeCSV(_ value: String) -> String {
         let escaped = value.replacingOccurrences(of: "\"", with: "\"\"")
         return "\"\(escaped)\""
+    }
+
+    private func rowToParsedLog(_ row: Row) -> ParsedLog {
+        let metadataData = row[metadataJSON].data(using: .utf8) ?? Data("{}".utf8)
+        let metadata = (try? JSONSerialization.jsonObject(with: metadataData) as? [String: String]) ?? [:]
+        return ParsedLog(
+            id: UUID(uuidString: row[id]) ?? UUID(),
+            timestamp: Date(timeIntervalSince1970: row[timestamp]),
+            sourceFile: row[sourceFile],
+            modelName: row[modelName],
+            prompt: row[prompt],
+            response: row[response],
+            tokensUsed: row[tokensUsed],
+            errorMessage: row[errorMessage],
+            metadata: metadata
+        )
     }
 
     static var defaultDatabaseURL: URL {
