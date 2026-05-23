@@ -15,7 +15,7 @@ struct InsuranceDashboardView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                DashboardHeroCard(workspace: workspace)
+                DashboardSummaryCard(workspace: workspace)
                 planningReadiness
                 summaryMetrics
                 keyGapSection
@@ -432,11 +432,19 @@ struct ProductComparisonView: View {
     }
 }
 
-private struct DashboardHeroCard: View {
+private struct DashboardSummaryCard: View {
     let workspace: InsuranceWorkspaceData
 
     var body: some View {
-        SoftCard(background: LinearGradient(colors: [Color.white, InsurancePalette.primary.opacity(0.10)], startPoint: .topLeading, endPoint: .bottomTrailing)) {
+        SoftCard(
+            background: AnyShapeStyle(
+                LinearGradient(
+                    colors: [Color.white, InsurancePalette.primary.opacity(0.10)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+        ) {
             VStack(alignment: .leading, spacing: 18) {
                 Text("\(workspace.householdName)的保障总览")
                     .font(.caption)
@@ -637,8 +645,8 @@ private struct SoftCard<Content: View>: View {
     var background: AnyShapeStyle = AnyShapeStyle(InsurancePalette.card)
     let content: Content
 
-    init(background: some ShapeStyle = InsurancePalette.card, @ViewBuilder content: () -> Content) {
-        self.background = AnyShapeStyle(background)
+    init(background: AnyShapeStyle = AnyShapeStyle(InsurancePalette.card), @ViewBuilder content: () -> Content) {
+        self.background = background
         self.content = content()
     }
 

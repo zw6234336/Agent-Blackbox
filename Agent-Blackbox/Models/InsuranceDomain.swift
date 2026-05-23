@@ -331,6 +331,13 @@ enum CoverageCategory: String, CaseIterable, Identifiable {
 }
 
 struct FamilyMemberProfile: Identifiable {
+    private enum ScoreModel {
+        static let emptyPolicyBaseline = 42.0
+        static let insuredBaseline = 62.0
+        static let ratioWeight = 28.0
+        static let maxScore = 96
+    }
+
     let id = UUID()
     let name: String
     let role: FamilyRole
@@ -342,9 +349,10 @@ struct FamilyMemberProfile: Identifiable {
 
     var protectionScore: Int {
         let totalGapRatio = gaps.map(\.coverageRatio).reduce(0, +)
-        let baseline = policies.isEmpty ? 42.0 : 62.0
+        let baseline = policies.isEmpty ? ScoreModel.emptyPolicyBaseline : ScoreModel.insuredBaseline
         let averageRatio = gaps.isEmpty ? 1.0 : totalGapRatio / Double(gaps.count)
-        return min(96, Int((baseline + averageRatio * 28).rounded()))
+        let weightedScore = baseline + averageRatio * ScoreModel.ratioWeight
+        return min(ScoreModel.maxScore, Int(weightedScore.rounded()))
     }
 }
 
@@ -432,6 +440,8 @@ struct KnowledgeCard: Identifiable {
     let detail: String
 }
 
+/// Formats amounts for the current Chinese-language prototype UI.
+/// Values above 10,000 use the Chinese "万" unit because the product copy and sample data are localized for that market.
 func formatInsuranceAmount(_ amount: Int) -> String {
     if amount >= 10_000 {
         let wan = Double(amount) / 10_000
