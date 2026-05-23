@@ -1,0 +1,47 @@
+# Xcode
+*.xcodeproj/*
+!*.xcodeproj/project.pbxproj
+!*.xcodeproj/xcshareddata/
+!*.xcodeproj/xcshareddata/xcschemes/
+DerivedData/
+*.xcuserstate
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+*.xccheckout
+*.moved-aside
+
+# Swift Package Manager
+.swiftpm
+.build/
+Packages/
+*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/
+
+# CocoaPods
+Pods/
+*.xcworkspace
+!default.xcworkspace
+
+# macOS
+.DS_Store
+*.db
+*.db-shm
+*.db-wal
+
+# App specific
+Logs/
+Config/user-config.plist
+data/
+
+# IDEs
+.idea/
+.vscode/
+
+# Temporary files
+*.swp
+*~
+.AppleDouble
+.LSOverride
+
+# Thumbnails
+._*
