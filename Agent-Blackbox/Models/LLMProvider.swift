@@ -18,6 +18,7 @@ enum LLMProvider: String, Codable, CaseIterable, Identifiable {
     case zhipu
     case amp
     case antigravity
+    case pi
     case custom
     
     var id: String { rawValue }
@@ -41,6 +42,7 @@ enum LLMProvider: String, Codable, CaseIterable, Identifiable {
         case .zhipu: return "智谱清言 GLM"
         case .amp: return "Amp (Sourcegraph)"
         case .antigravity: return "Antigravity (Google)"
+        case .pi: return "Pi (Inflection)"
         case .custom: return "自定义"
         }
     }
@@ -64,6 +66,7 @@ enum LLMProvider: String, Codable, CaseIterable, Identifiable {
         case .zhipu: return "cpu.fill"
         case .amp: return "bolt.shield.fill"
         case .antigravity: return "atom"
+        case .pi: return "heart.circle"
         case .custom: return "gearshape"
         }
     }
@@ -87,6 +90,7 @@ enum LLMProvider: String, Codable, CaseIterable, Identifiable {
         case .zhipu: return Color(hue: 0.55, saturation: 0.8, brightness: 0.7)
         case .amp: return Color(hue: 0.85, saturation: 0.85, brightness: 0.85)
         case .antigravity: return Color(hue: 0.58, saturation: 0.9, brightness: 0.85)
+        case .pi: return Color(hue: 0.02, saturation: 0.85, brightness: 0.75)
         case .custom: return Color(hue: 0.0, saturation: 0.0, brightness: 0.6)
         }
     }
@@ -168,6 +172,17 @@ enum LLMProvider: String, Codable, CaseIterable, Identifiable {
                 home + "/Library/Logs/Antigravity/",
                 home + "/Library/Application Support/Antigravity/logs/",
                 home + "/Library/Application Support/Antigravity IDE/logs/"
+            ]
+        case .pi:
+            return [
+                // Pi API 日志
+                home + "/.pi/logs/",
+                home + "/.pi/",
+                // 导出的对话记录
+                home + "/Library/Application Support/Pi/",
+                // Pi Desktop (如果存在)
+                home + "/Library/Application Support/com.inflection.pi/",
+                home + "/Library/Logs/Pi/"
             ]
         default:
             return []

@@ -102,6 +102,7 @@ extension LogParser {
                 if content.contains("qwen") { return .qwen }
                 if content.contains("kimi") || content.contains("moonshot") { return .kimi }
                 if content.contains("glm") || content.contains("chatglm") || content.contains("zhipu") { return .zhipu }
+                if content.contains("inflection") || content.contains("pi.ai") { return .pi }
             }
             return .custom
         }
@@ -117,6 +118,7 @@ extension LogParser {
         if model.contains("llama") || model.contains("mistral") || model.contains("gemma") { return .ollama }
         if model.contains("copilot") { return .copilot }
         if model.contains("cursor") { return .cursor }
+        if model.contains("inflection") || model.contains("pi-") { return .pi }
         
         return .custom
     }

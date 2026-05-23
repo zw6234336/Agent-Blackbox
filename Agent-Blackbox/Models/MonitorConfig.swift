@@ -60,7 +60,14 @@ struct MonitorConfig: Codable, Equatable {
             // Amp (Sourcegraph)
             home + "/.local/share/amp/threads/",
             home + "/.local/share/amp/",
-            home + "/.cache/amp/logs/"
+            home + "/.cache/amp/logs/",
+
+            // Pi (Inflection AI)
+            home + "/.pi/logs/",
+            home + "/.pi/",
+            home + "/Library/Application Support/Pi/",
+            home + "/Library/Application Support/com.inflection.pi/",
+            home + "/Library/Logs/Pi/"
         ]
         
         for path in candidates {
@@ -88,7 +95,9 @@ struct MonitorConfig: Codable, Equatable {
         "T-*.json",                       // Amp threads
         "*/chatSessions/*.json",          // VSCode Copilot chat sessions
         "*/threads/T-*.json",             // Amp threads (path-scoped, redundant safety)
-        "*/dev.warp.Warp-Stable/mcp/*.log" // Warp MCP logs
+        "*/dev.warp.Warp-Stable/mcp/*.log", // Warp MCP logs
+        "*pi*.json",                      // Pi conversation exports
+        "*pi*.jsonl"                      // Pi JSONL logs
     ]
     var isRecursive: Bool = true
     var refreshInterval: TimeInterval = 1.0
