@@ -177,7 +177,7 @@ struct StatisticsView: View {
     /// Flat data array used for the stacked bar chart
     private var trendChartData: [TrendChartEntry] {
         trend.flatMap { point in [
-            TrendChartEntry(date: point.date, category: Self.categoryNormal, value: max(0, point.count - point.errorCount)),
+            TrendChartEntry(date: point.date, category: Self.categoryNormal, value: point.normalCount),
             TrendChartEntry(date: point.date, category: Self.categoryError,  value: point.errorCount)
         ]}
     }
