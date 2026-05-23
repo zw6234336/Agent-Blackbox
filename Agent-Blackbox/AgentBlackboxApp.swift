@@ -20,6 +20,7 @@ struct AgentBlackboxApp: App {
         Settings {
             SettingsView()
                 .environmentObject(configService)
+                .environmentObject(database)
         }
     }
 }

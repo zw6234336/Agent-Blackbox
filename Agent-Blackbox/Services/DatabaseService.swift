@@ -131,6 +131,16 @@ final class DatabaseService: ObservableObject {
                     } else {
                         try handle.write(contentsOf: Data(",".utf8))
                     }
+
+                    func clearAllLogs() async {
+                        guard let db else { return }
+                        do {
+                            try db.run(logsTable.delete())
+                            await reloadLogs()
+                        } catch {
+                            Logger.shared.error("清空数据库失败: \(error.localizedDescription)")
+                        }
+                    }
                     try handle.write(contentsOf: encoded)
                 }
                 try handle.write(contentsOf: Data("]".utf8))
