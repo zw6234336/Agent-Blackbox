@@ -9,7 +9,7 @@ struct ContentView: View {
         case comparison
     }
 
-    @State private var selectedTab: Tab? = .dashboard
+    @State private var selectedTab: Tab? = .dashboard // Optional selection is required by sidebar List selection on macOS.
     private let workspace = InsuranceWorkspaceData.sample
 
     var body: some View {

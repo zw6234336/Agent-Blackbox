@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct SettingsView: View {
+    private static let designPrincipleDescription = "界面默认先展示结论、缺口和行动建议，不再以监控状态、底层日志或工程化配置为主。"
     private let workspace = InsuranceWorkspaceData.sample
 
     var body: some View {
@@ -12,7 +13,7 @@ struct SettingsView: View {
 
                 preferenceCard(
                     title: "当前默认预算",
-                    value: formatInsuranceAmount(workspace.annualBudget),
+                    value: formatInsuranceAmountCN(workspace.annualBudget),
                     detail: "推荐页面会优先展示与此预算接近的基础版、均衡版、加强版方案。"
                 )
 
@@ -31,7 +32,7 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("产品设计原则")
                         .font(.headline)
-                    Text("界面默认先展示结论、缺口和行动建议，不再以监控状态、底层日志或工程化配置为主。")
+                    Text(Self.designPrincipleDescription)
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
