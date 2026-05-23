@@ -742,7 +742,7 @@ final class DatabaseService: ObservableObject {
             let errors = try db.scalar(
                 range.filter(errorMessage != nil && (errorMessage ?? "") != "").count
             )
-            let totalTokens = (try db.scalar(range.select(tokensUsed.sum))) ?? 0
+            let totalTokens = (try db.scalar(range.select(totalTokens.sum))) ?? 0
             let modelRows = try db.prepare(range.select(modelName).filter(modelName != nil))
             let models = Set(modelRows.compactMap { $0[modelName] })
             return LogStats(
