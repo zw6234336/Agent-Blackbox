@@ -120,9 +120,13 @@ enum LLMProvider: String, Codable, CaseIterable, Identifiable {
             return [home + "/.ollama/logs/"]
         case .copilot:
             return [
-                home + "/Library/Application Support/Code/logs/",
+                // chatSessions: .json（旧格式）和 .jsonl（新格式，含 modelId/耗时）
                 home + "/Library/Application Support/Code/User/workspaceStorage/",
+                // Cursor 中的 Copilot 会话
                 home + "/Library/Application Support/Cursor/User/workspaceStorage/",
+                // VS Code 全局 Copilot 存储（session-store.db 等）
+                home + "/Library/Application Support/Code/User/globalStorage/github.copilot-chat/",
+                // Copilot for Xcode
                 home + "/Library/Logs/CopilotForXcode/",
                 home + "/Library/Application Support/CopilotForXcode/"
             ]

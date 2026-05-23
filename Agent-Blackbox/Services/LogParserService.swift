@@ -9,7 +9,8 @@ final class LogParserService: Sendable {
         ClaudeCodeCLIParser(),
         AmpThreadParser(),
         AntigravityParser(),
-        CopilotChatSessionParser(),
+        CopilotChatSessionJSONLParser(), // .jsonl 格式（新版 VS Code，含 modelId/耗时）
+        CopilotChatSessionParser(),      // .json 格式（旧版 VS Code）
         GenericLLMParser()  // fallback, always last
     ]
     
