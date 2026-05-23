@@ -25,7 +25,7 @@ final class FileMonitorService: ObservableObject {
     func startMonitoring(paths: [String]) {
         stopMonitoring()
 
-        let normalizedPaths = paths.filter { !$0.isEmpty }
+        let normalizedPaths = paths.filter { !$0.isEmpty && FileManager.default.fileExists(atPath: $0) }
         guard !normalizedPaths.isEmpty else { return }
 
         monitoredPaths = normalizedPaths
@@ -65,9 +65,13 @@ final class FileMonitorService: ObservableObject {
 
         guard let eventStream else { return }
 
-        FSEventStreamScheduleWithRunLoop(eventStream, CFRunLoopGetMain(), kCFRunLoopDefaultMode)
+        FSEventStreamScheduleWithRunLoop(eventStream, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
         isMonitoring = FSEventStreamStart(eventStream)
         Logger.shared.info("开始监控: \(monitoredPaths.joined(separator: ", "))")
+        
+        Task(priority: .background) {
+            await performInitialScan(paths: normalizedPaths)
+        }
     }
 
     func stopMonitoring() {
@@ -116,6 +120,62 @@ final class FileMonitorService: ObservableObject {
     private func matchesPattern(_ fileName: String) -> Bool {
         filePatterns.contains { pattern in
             fileName.wildcardMatch(pattern)
+        }
+    }
+    
+    private func performInitialScan(paths: [String]) async {
+        Logger.shared.info("开始扫描监控目录中的历史日志...")
+        let fm = FileManager.default
+        var urlsToProcess: [URL] = []
+        
+        for path in paths {
+            let url = URL(fileURLWithPath: path)
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: path, isDirectory: &isDir) else { continue }
+            
+            if isDir.boolValue {
+                let keys: [URLResourceKey] = [.isRegularFileKey]
+                guard let enumerator = fm.enumerator(
+                    at: url,
+                    includingPropertiesForKeys: keys,
+                    options: [.skipsPackageDescendants, .skipsHiddenFiles]
+                ) else { continue }
+                
+                while let fileURL = enumerator.nextObject() as? URL {
+                    guard let resourceValues = try? fileURL.resourceValues(forKeys: Set(keys)),
+                          resourceValues.isRegularFile ?? false else { continue }
+                    
+                    if matchesPattern(fileURL.lastPathComponent) {
+                        urlsToProcess.append(fileURL)
+                    }
+                }
+            } else {
+                if matchesPattern(url.lastPathComponent) {
+                    urlsToProcess.append(url)
+                }
+            }
+        }
+        
+        Logger.shared.info("找到 \(urlsToProcess.count) 个历史日志文件，开始解析...")
+        
+        var parsedCount = 0
+        for fileURL in urlsToProcess {
+            let results = await parser.parseAllEntries(at: fileURL)
+            if !results.isEmpty {
+                for log in results {
+                    await database?.saveLog(log)
+                }
+                parsedCount += results.count
+            }
+        }
+        
+        Logger.shared.info("历史日志扫描完成！解析并保存了 \(parsedCount) 条历史记录。")
+        
+        await MainActor.run {
+            database?.refreshDashboardStats()
+            Task {
+                await database?.reloadLogs()
+            }
         }
     }
 }

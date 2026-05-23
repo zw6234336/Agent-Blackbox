@@ -1,0 +1,141 @@
+import SwiftUI
+
+enum LLMProvider: String, Codable, CaseIterable, Identifiable {
+    case openai
+    case anthropic
+    case google
+    case ollama
+    case cursor
+    case copilot
+    case claudeDesktop = "claude_desktop"
+    case cline
+    case lmstudio
+    case continuedev
+    case deepseek
+    case qwen
+    case kimi
+    case zhipu
+    case custom
+    
+    var id: String { rawValue }
+    
+    var displayName: String {
+        switch self {
+        case .openai: return "OpenAI"
+        case .anthropic: return "Anthropic"
+        case .google: return "Google"
+        case .ollama: return "Ollama"
+        case .cursor: return "Cursor"
+        case .copilot: return "GitHub Copilot"
+        case .claudeDesktop: return "Claude Desktop"
+        case .cline: return "Cline"
+        case .lmstudio: return "LM Studio"
+        case .continuedev: return "Continue.dev"
+        case .deepseek: return "DeepSeek"
+        case .qwen: return "通义千问 Qwen"
+        case .kimi: return "月之暗面 Kimi"
+        case .zhipu: return "智谱清言 GLM"
+        case .custom: return "自定义"
+        }
+    }
+    
+    var iconName: String {
+        switch self {
+        case .openai: return "brain.head.profile"
+        case .anthropic: return "sparkle"
+        case .google: return "globe"
+        case .ollama: return "desktopcomputer"
+        case .cursor: return "cursorarrow.rays"
+        case .copilot: return "airplane"
+        case .claudeDesktop: return "bubble.left.fill"
+        case .cline: return "terminal"
+        case .lmstudio: return "cpu"
+        case .continuedev: return "arrow.right.circle"
+        case .deepseek: return "sparkles"
+        case .qwen: return "aqi.medium"
+        case .kimi: return "moon.fill"
+        case .zhipu: return "cpu.fill"
+        case .custom: return "gearshape"
+        }
+    }
+    
+    var brandColor: Color {
+        switch self {
+        case .openai: return Color(hue: 0.47, saturation: 0.85, brightness: 0.65)
+        case .anthropic: return Color(hue: 0.08, saturation: 0.75, brightness: 0.85)
+        case .google: return Color(hue: 0.6, saturation: 0.7, brightness: 0.8)
+        case .ollama: return Color(hue: 0.0, saturation: 0.0, brightness: 0.45)
+        case .cursor: return Color(hue: 0.75, saturation: 0.6, brightness: 0.9)
+        case .copilot: return Color(hue: 0.55, saturation: 0.6, brightness: 0.7)
+        case .claudeDesktop: return Color(hue: 0.08, saturation: 0.75, brightness: 0.85)
+        case .cline: return Color(hue: 0.35, saturation: 0.7, brightness: 0.7)
+        case .lmstudio: return Color(hue: 0.85, saturation: 0.6, brightness: 0.8)
+        case .continuedev: return Color(hue: 0.95, saturation: 0.7, brightness: 0.85)
+        case .deepseek: return Color(hue: 0.6, saturation: 0.85, brightness: 0.9)
+        case .qwen: return Color(hue: 0.72, saturation: 0.7, brightness: 0.8)
+        case .kimi: return Color(hue: 0.05, saturation: 0.8, brightness: 0.85)
+        case .zhipu: return Color(hue: 0.55, saturation: 0.8, brightness: 0.7)
+        case .custom: return Color(hue: 0.0, saturation: 0.0, brightness: 0.6)
+        }
+    }
+    
+    /// Known log paths on macOS for this provider
+    var defaultLogPaths: [String] {
+        let home = NSHomeDirectory()
+        switch self {
+        case .openai:
+            return [
+                home + "/Library/Application Support/com.openai.chat/",
+                home + "/Library/Group Containers/group.com.openai.chat/"
+            ]
+        case .anthropic:
+            return [
+                home + "/Library/Logs/Claude/",
+                home + "/Library/Application Support/Claude/"
+            ]
+        case .google:
+            return [
+                home + "/.config/gcloud/logs/"
+            ]
+        case .cursor:
+            return [
+                home + "/Library/Application Support/Cursor/User/workspaceStorage/",
+                home + "/Library/Application Support/Cursor/User/globalStorage/",
+                home + "/Library/Application Support/Cursor/logs/"
+            ]
+        case .claudeDesktop:
+            return [
+                home + "/Library/Logs/Claude/",
+                home + "/Library/Application Support/Claude/"
+            ]
+        case .ollama:
+            return [home + "/.ollama/logs/"]
+        case .copilot:
+            return [
+                home + "/Library/Application Support/Code/logs/",
+                home + "/Library/Application Support/Code/User/workspaceStorage/",
+                home + "/Library/Application Support/Cursor/User/workspaceStorage/",
+                home + "/Library/Logs/CopilotForXcode/",
+                home + "/Library/Application Support/CopilotForXcode/"
+            ]
+        case .cline:
+            return [
+                home + "/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/tasks/",
+                home + "/Library/Application Support/Cursor/User/globalStorage/saoudrizwan.claude-dev/tasks/"
+            ]
+        case .lmstudio:
+            return [
+                home + "/.lmstudio/",
+                home + "/.cache/lm-studio/"
+            ]
+        case .continuedev:
+            return [
+                home + "/.continue/logs/",
+                home + "/.continue/sessions/",
+                home + "/.continue/"
+            ]
+        default:
+            return []
+        }
+    }
+}

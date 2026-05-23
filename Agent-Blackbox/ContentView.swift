@@ -1,66 +1,99 @@
 import SwiftUI
 
 struct ContentView: View {
-    private enum Tab: Hashable {
-        case dashboard
-        case coverage
-        case analysis
-        case recommendations
-        case comparison
-    }
-
-    @State private var selectedTab: Tab = .dashboard
-    private let workspace = InsuranceWorkspaceData.sample
-
-    private var sidebarSelection: Binding<Tab?> {
-        Binding(
-            get: { selectedTab },
-            set: { newValue in
-                if let newValue {
-                    selectedTab = newValue
-                }
-            }
-        )
-    }
+    @EnvironmentObject var fileMonitor: FileMonitorService
+    @EnvironmentObject var database: DatabaseService
+    @EnvironmentObject var configService: ConfigService
+    @State private var selectedTab = 0
 
     var body: some View {
         NavigationSplitView {
-            List(selection: sidebarSelection) {
-                Label("总览", systemImage: "house")
-                    .tag(Tab.dashboard)
-                Label("我的保障", systemImage: "person.2")
-                    .tag(Tab.coverage)
-                Label("保障分析", systemImage: "shield.checkered")
-                    .tag(Tab.analysis)
-                Label("缺口推荐", systemImage: "sparkles")
-                    .tag(Tab.recommendations)
-                Label("产品对比", systemImage: "square.grid.2x2")
-                    .tag(Tab.comparison)
+            List(selection: $selectedTab) {
+                Section("概览") {
+                    Label("看板", systemImage: "chart.bar.doc.horizontal")
+                        .tag(0)
+                }
+
+                Section("数据") {
+                    Label("日志", systemImage: "doc.text.magnifyingglass")
+                        .tag(1)
+                    Label("收藏", systemImage: "star.fill")
+                        .tag(2)
+                }
+
+                Section("用量") {
+                    Label("速率/配额", systemImage: "gauge.with.dots.needle.bottom.50percent")
+                        .tag(4)
+                }
+
+                Section("系统") {
+                    Label("监控", systemImage: "eye.circle")
+                        .tag(3)
+                }
             }
+            .navigationTitle("Agent Blackbox")
             .listStyle(.sidebar)
-            .navigationTitle("保险决策助手")
         } detail: {
             Group {
                 switch selectedTab {
-                case .dashboard:
-                    InsuranceDashboardView(workspace: workspace)
-                case .coverage:
-                    MyCoverageView(workspace: workspace)
-                case .analysis:
-                    GapAnalysisView(workspace: workspace)
-                case .recommendations:
-                    RecommendationsView(workspace: workspace)
-                case .comparison:
-                    ProductComparisonView(workspace: workspace)
+                case 0:
+                    DashboardView()
+                case 1:
+                    LogListView()
+                case 2:
+                    CollectionView()
+                case 3:
+                    MonitorView()
+                case 4:
+                    RateLimitView()
+                default:
+                    DashboardView()
                 }
+            }
+            .onAppear {
+                fileMonitor.bind(database: database)
+                fileMonitor.updateFilePatterns(configService.config.filePatterns)
+            }
+            .onChange(of: configService.config.filePatterns) { oldValue, newValue in
+                fileMonitor.updateFilePatterns(newValue)
             }
             .toolbar {
-                ToolbarItemGroup(placement: .automatic) {
-                    Label("家庭保障分 \(workspace.protectionScore)", systemImage: "shield.lefthalf.filled")
-                    Text("待补资料 \(workspace.pendingMaterialCount)")
-                        .foregroundColor(.secondary)
+                ToolbarItemGroup {
+                    Button(action: toggleMonitoring) {
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(fileMonitor.isMonitoring ? Color.green : Color.gray)
+                                .frame(width: 8, height: 8)
+                            Text(fileMonitor.isMonitoring ? "监控中" : "未监控")
+                                .font(.caption)
+                        }
+                    }
+                    .help(fileMonitor.isMonitoring ? "点击停止监控" : "点击开始监控")
+
+                    Divider()
+
+                    HStack(spacing: 12) {
+                        Label("\(database.totalLogCount)", systemImage: "doc.text")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        if database.dashboardStats.totalTokens > 0 {
+                            Label("\(database.dashboardStats.totalTokens.formattedCompact) tokens", systemImage: "textformat.abc")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                 }
             }
+        }
+    }
+
+    private func toggleMonitoring() {
+        if fileMonitor.isMonitoring {
+            fileMonitor.stopMonitoring()
+        } else {
+            let paths = configService.config.monitoredDirectories
+            fileMonitor.startMonitoring(paths: paths)
         }
     }
 }

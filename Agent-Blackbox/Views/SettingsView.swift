@@ -1,65 +1,268 @@
+import AppKit
 import SwiftUI
 
 struct SettingsView: View {
-    private static let designDescription = "界面默认先展示结论、缺口和行动建议，不再以监控状态、底层日志或工程化配置为主。"
-    private let workspace = InsuranceWorkspaceData.sample
+    @EnvironmentObject var configService: ConfigService
+    @EnvironmentObject var database: DatabaseService
+    @State private var showClearConfirmation = false
+    @State private var cleanupResult: String? = nil
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                Text("规划偏好")
-                    .font(.title2)
-                    .fontWeight(.semibold)
-
-                preferenceCard(
-                    title: "当前默认预算",
-                    value: formatInsuranceAmountCN(workspace.annualBudget),
-                    detail: "推荐页面会优先展示与此预算接近的基础版、均衡版、加强版方案。"
-                )
-
-                preferenceCard(
-                    title: "资料完整度",
-                    value: "\(workspace.completedReadinessCount)/\(workspace.readinessSteps.count) 步",
-                    detail: "资料接入、知识结构化、保障分析已经完成，仍有部分偏好待确认。"
-                )
-
-                preferenceCard(
-                    title: "当前提醒",
-                    value: "\(workspace.pendingMaterialCount) 项待完善",
-                    detail: "建议优先补录寿险期限偏好、少儿医保信息和家庭年保费区间。"
-                )
-
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("产品设计原则")
-                        .font(.headline)
-                    Text(Self.designDescription)
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
+        TabView {
+            generalSettings
+                .tabItem {
+                    Label("通用", systemImage: "gear")
                 }
-            }
-            .padding(24)
+
+            directorySettings
+                .tabItem {
+                    Label("监控目录", systemImage: "folder")
+                }
+
+            tokenRateSettings
+                .tabItem {
+                    Label("费率配置", systemImage: "dollarsign.circle")
+                }
+
+            dataSettings
+                .tabItem {
+                    Label("数据管理", systemImage: "externaldrive")
+                }
         }
-        .frame(width: 520, height: 420)
+        .frame(width: 600, height: 450)
     }
 
-    private func preferenceCard(title: String, value: String, detail: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.headline)
-            Text(value)
-                .font(.title3)
-                .fontWeight(.semibold)
-            Text(detail)
-                .font(.subheadline)
-                .foregroundColor(.secondary)
+    private var generalSettings: some View {
+        Form {
+            Section("监控设置") {
+                Toggle("开机自动启动", isOn: $configService.config.autoStart)
+                Toggle("启用通知", isOn: $configService.config.enableNotifications)
+                Toggle("递归监控子目录", isOn: $configService.config.isRecursive)
+            }
+
+            Section("文件类型") {
+                ForEach(configService.config.filePatterns, id: \.self) { pattern in
+                    HStack {
+                        Text(pattern)
+                            .font(.system(.body, design: .monospaced))
+                        Spacer()
+                        Button(action: {
+                            configService.config.filePatterns.removeAll { $0 == pattern }
+                        }) {
+                            Image(systemName: "minus.circle")
+                                .foregroundStyle(.red)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                HStack {
+                    Text("常用格式已预设")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Section("数据保留") {
+                Stepper("保留 \(configService.config.dataRetentionDays) 天",
+                        value: $configService.config.dataRetentionDays,
+                        in: 7...365, step: 7)
+            }
         }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.white.opacity(0.95))
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(Color.black.opacity(0.05))
-        )
+        .formStyle(.grouped)
+        .onChange(of: configService.config) {
+            configService.save()
+        }
+    }
+
+    private var directorySettings: some View {
+        Form {
+            Section("当前监控目录") {
+                ForEach(configService.config.monitoredDirectories, id: \.self) { dir in
+                    HStack {
+                        Image(systemName: "folder")
+                            .foregroundStyle(Color.accentGradientStart)
+                        Text(dir.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
+                            .font(.subheadline)
+                        Spacer()
+                        Button(action: {
+                            configService.config.monitoredDirectories.removeAll { $0 == dir }
+                            configService.save()
+                        }) {
+                            Image(systemName: "minus.circle")
+                                .foregroundStyle(.red)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                Button("添加目录") {
+                    let panel = NSOpenPanel()
+                    panel.canChooseDirectories = true
+                    panel.canChooseFiles = false
+                    panel.allowsMultipleSelection = false
+                    panel.canCreateDirectories = true
+                    if panel.runModal() == .OK, let url = panel.url {
+                        let path = url.path
+                        if !configService.config.monitoredDirectories.contains(path) {
+                            configService.config.monitoredDirectories.append(path)
+                            configService.save()
+                        }
+                    }
+                }
+            }
+
+            Section("快速添加 LLM 工具目录") {
+                ForEach(LLMProvider.allCases) { provider in
+                    if !provider.defaultLogPaths.isEmpty {
+                        DisclosureGroup {
+                            ForEach(provider.defaultLogPaths, id: \.self) { path in
+                                let exists = FileManager.default.fileExists(atPath: path)
+                                let added = configService.config.monitoredDirectories.contains(path)
+                                HStack {
+                                    Text(path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
+                                        .font(.caption)
+                                        .foregroundStyle(exists ? .primary : .tertiary)
+                                    Spacer()
+                                    if added {
+                                        Text("已添加")
+                                            .font(.caption2)
+                                            .foregroundStyle(Color.successGreen)
+                                    } else if exists {
+                                        Button("添加") {
+                                            configService.config.monitoredDirectories.append(path)
+                                            configService.save()
+                                        }
+                                        .font(.caption)
+                                    } else {
+                                        Text("未安装")
+                                            .font(.caption2)
+                                            .foregroundStyle(.tertiary)
+                                    }
+                                }
+                            }
+                        } label: {
+                            HStack {
+                                Image(systemName: provider.iconName)
+                                    .foregroundStyle(provider.brandColor)
+                                Text(provider.displayName)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private var tokenRateSettings: some View {
+        Form {
+            Section("Token 费率配置（每 1K tokens，美元）") {
+                ForEach(Array(configService.config.tokenRates.keys.sorted()), id: \.self) { model in
+                    if let rate = configService.config.tokenRates[model] {
+                        HStack {
+                            Text(model)
+                                .font(.system(.body, design: .monospaced))
+                                .frame(width: 180, alignment: .leading)
+                            Spacer()
+                            VStack(alignment: .trailing, spacing: 2) {
+                                Text("Input: $\(String(format: "%.5f", rate.inputPer1K))")
+                                    .font(.caption)
+                                Text("Output: $\(String(format: "%.5f", rate.outputPer1K))")
+                                    .font(.caption)
+                            }
+                            .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+
+            Section {
+                Text("费率用于估算 LLM 调用费用，可在此调整各模型的价格。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private var dataSettings: some View {
+        Form {
+            Section("数据库") {
+                HStack {
+                    Text("路径")
+                        .foregroundStyle(.secondary)
+                    Text(configService.config.databasePath)
+                        .font(.caption)
+                        .textSelection(.enabled)
+                }
+
+                HStack {
+                    Text("总日志数")
+                        .foregroundStyle(.secondary)
+                    Text("\(database.totalLogCount)")
+                }
+
+                HStack {
+                    Text("收藏数")
+                        .foregroundStyle(.secondary)
+                    Text("\(database.bookmarkedCount)")
+                }
+
+                Button("清空数据库") {
+                    showClearConfirmation = true
+                }
+                .foregroundColor(.red)
+                .confirmationDialog("确定要清空所有数据吗？", isPresented: $showClearConfirmation) {
+                    Button("清空所有数据", role: .destructive) {
+                        Task { await database.clearAllLogs() }
+                    }
+                    Button("取消", role: .cancel) {}
+                } message: {
+                    Text("此操作将删除所有日志数据，无法恢复。")
+                }
+            }
+
+            Section("数据质量") {
+                Text("清理由旧版本解析器写入的脏数据：模型名为 n_ctx / 7.27 / FileNotFoundError 等的污染条目，以及缺失 token 的 claude-code 历史行。下次启动监控时新版解析器会自动重新提取。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                HStack {
+                    Button("清理脏数据") {
+                        Task {
+                            let n = await database.cleanupGarbageLogs()
+                            cleanupResult = "已删除 \(n) 条脏数据"
+                        }
+                    }
+                    if let r = cleanupResult {
+                        Text(r).font(.caption).foregroundStyle(.green)
+                    }
+                }
+            }
+
+            Section("导出") {
+                HStack {
+                    Text("导出目录")
+                        .foregroundStyle(.secondary)
+                    Text(configService.config.exportDirectory.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
+                        .font(.caption)
+                }
+
+                HStack {
+                    Button("导出 JSON") {
+                        if let url = database.exportLogs(format: .json) {
+                            NSWorkspace.shared.activateFileViewerSelecting([url])
+                        }
+                    }
+                    Button("导出 CSV") {
+                        if let url = database.exportLogs(format: .csv) {
+                            NSWorkspace.shared.activateFileViewerSelecting([url])
+                        }
+                    }
+                }
+            }
+        }
+        .formStyle(.grouped)
     }
 }
