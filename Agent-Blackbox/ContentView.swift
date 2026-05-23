@@ -1,65 +1,66 @@
 import SwiftUI
 
 struct ContentView: View {
-    @EnvironmentObject var fileMonitor: FileMonitorService
-    @EnvironmentObject var database: DatabaseService
-    @EnvironmentObject var configService: ConfigService
-    @State private var selectedTab = 0
+    private enum Tab: Hashable {
+        case dashboard
+        case coverage
+        case analysis
+        case recommendations
+        case comparison
+    }
+
+    @State private var selectedTab: Tab = .dashboard
+    private let workspace = InsuranceWorkspaceData.sample
+
+    private var sidebarSelection: Binding<Tab?> {
+        Binding(
+            get: { selectedTab },
+            set: { newValue in
+                if let newValue {
+                    selectedTab = newValue
+                }
+            }
+        )
+    }
 
     var body: some View {
         NavigationSplitView {
-            List(selection: $selectedTab) {
-                Label("监控", systemImage: "eye")
-                    .tag(0)
-                Label("位置与交互", systemImage: "map")
-                    .tag(1)
-                Label("日志", systemImage: "doc.text")
-                    .tag(2)
-                Label("统计", systemImage: "chart.bar")
-                    .tag(3)
+            List(selection: sidebarSelection) {
+                Label("总览", systemImage: "house")
+                    .tag(Tab.dashboard)
+                Label("我的保障", systemImage: "person.2")
+                    .tag(Tab.coverage)
+                Label("保障分析", systemImage: "shield.checkered")
+                    .tag(Tab.analysis)
+                Label("缺口推荐", systemImage: "sparkles")
+                    .tag(Tab.recommendations)
+                Label("产品对比", systemImage: "square.grid.2x2")
+                    .tag(Tab.comparison)
             }
-            .navigationTitle("Agent Blackbox")
+            .listStyle(.sidebar)
+            .navigationTitle("保险决策助手")
         } detail: {
             Group {
                 switch selectedTab {
-                case 0:
-                    MonitorView()
-                case 1:
-                    LogLocationView()
-                case 2:
-                    LogListView()
-                case 3:
-                    StatisticsView()
-                default:
-                    Text("选择一个视图")
+                case .dashboard:
+                    InsuranceDashboardView(workspace: workspace)
+                case .coverage:
+                    MyCoverageView(workspace: workspace)
+                case .analysis:
+                    GapAnalysisView(workspace: workspace)
+                case .recommendations:
+                    RecommendationsView(workspace: workspace)
+                case .comparison:
+                    ProductComparisonView(workspace: workspace)
                 }
-            }
-            .onAppear {
-                fileMonitor.bind(database: database)
-                fileMonitor.updateFilePatterns(configService.config.filePatterns)
-            }
-            .onChange(of: configService.config.filePatterns) { newValue in
-                fileMonitor.updateFilePatterns(newValue)
             }
             .toolbar {
-                ToolbarItem {
-                    Button(action: toggleMonitoring) {
-                        Label(
-                            fileMonitor.isMonitoring ? "停止监控" : "开始监控",
-                            systemImage: fileMonitor.isMonitoring ? "stop.circle" : "play.circle"
-                        )
-                    }
+                ToolbarItemGroup(placement: .automatic) {
+                    Label("家庭保障分 \(workspace.protectionScore)", systemImage: "shield.lefthalf.filled")
+                    Text("待补资料 \(workspace.pendingMaterialCount)")
+                        .foregroundColor(.secondary)
                 }
             }
-        }
-    }
-
-    private func toggleMonitoring() {
-        if fileMonitor.isMonitoring {
-            fileMonitor.stopMonitoring()
-        } else {
-            let paths = configService.config.monitoredDirectories
-            fileMonitor.startMonitoring(paths: paths)
         }
     }
 }
