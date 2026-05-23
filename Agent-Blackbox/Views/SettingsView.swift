@@ -1,7 +1,9 @@
+import AppKit
 import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject var configService: ConfigService
+    @EnvironmentObject var database: DatabaseService
 
     var body: some View {
         Form {
@@ -15,7 +17,19 @@ struct SettingsView: View {
                 ForEach(configService.config.monitoredDirectories, id: \.self) { dir in
                     Text(dir)
                 }
-                Button("添加目录") {}
+                Button("添加目录") {
+                    let panel = NSOpenPanel()
+                    panel.canChooseDirectories = true
+                    panel.canChooseFiles = false
+                    panel.allowsMultipleSelection = false
+                    panel.canCreateDirectories = true
+                    if panel.runModal() == .OK, let url = panel.url {
+                        let path = url.path
+                        if !configService.config.monitoredDirectories.contains(path) {
+                            configService.config.monitoredDirectories.append(path)
+                        }
+                    }
+                }
             }
 
             Section("文件类型") {
@@ -26,7 +40,11 @@ struct SettingsView: View {
 
             Section("数据库") {
                 Text("路径: \(configService.config.databasePath)")
-                Button("清空数据库") {}
+                Button("清空数据库") {
+                    Task {
+                        await database.clearAllLogs()
+                    }
+                }
                     .foregroundColor(.red)
             }
         }
