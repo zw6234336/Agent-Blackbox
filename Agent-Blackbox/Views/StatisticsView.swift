@@ -45,7 +45,10 @@ struct StatisticsView: View {
     @State private var lastRefresh: Date = Date()
     @State private var isVisible = false
 
-    private let timer = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
+    private let timer = Timer.publish(every: Self.refreshInterval, on: .main, in: .common).autoconnect()
+    private static let refreshInterval: TimeInterval = 30
+    private static let categoryNormal = "正常"
+    private static let categoryError  = "错误"
 
     var body: some View {
         ScrollView {
@@ -114,7 +117,7 @@ struct StatisticsView: View {
                         )
                         .foregroundStyle(by: .value("类型", entry.category))
                     }
-                    .chartForegroundStyleScale(["正常": Color.blue.opacity(0.75), "错误": Color.red.opacity(0.8)])
+                    .chartForegroundStyleScale([Self.categoryNormal: Color.blue.opacity(0.75), Self.categoryError: Color.red.opacity(0.8)])
                     .chartXAxis { dateAxisMarks }
                     .chartYAxis {
                         AxisMarks { _ in
@@ -174,8 +177,8 @@ struct StatisticsView: View {
     /// Flat data array used for the stacked bar chart
     private var trendChartData: [TrendChartEntry] {
         trend.flatMap { point in [
-            TrendChartEntry(date: point.date, category: "正常", value: max(0, point.count - point.errorCount)),
-            TrendChartEntry(date: point.date, category: "错误", value: point.errorCount)
+            TrendChartEntry(date: point.date, category: Self.categoryNormal, value: max(0, point.count - point.errorCount)),
+            TrendChartEntry(date: point.date, category: Self.categoryError,  value: point.errorCount)
         ]}
     }
 
