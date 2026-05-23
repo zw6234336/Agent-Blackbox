@@ -77,12 +77,17 @@ open Agent-Blackbox.xcodeproj
 
 ```
 Agent-Blackbox/
-├── App/              # 应用入口
-├── Views/            # SwiftUI 视图
-├── Models/           # 数据模型
-├── Services/         # 核心服务
-├── Utils/            # 工具类
-└── Resources/        # 资源文件
+├── Agent-Blackbox/
+│   ├── AgentBlackboxApp.swift
+│   ├── ContentView.swift
+│   ├── Views/
+│   ├── Models/
+│   ├── Services/
+│   ├── Utils/
+│   ├── Resources/
+│   └── Info.plist
+├── Package.swift
+└── Agent-Blackbox.entitlements
 ```
 
 ### 贡献
