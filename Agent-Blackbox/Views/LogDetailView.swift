@@ -17,24 +17,23 @@ struct LogDetailView: View {
                     }
                 }
 
-                if let prompt = log.prompt {
-                    GroupBox("Prompt") {
-                        Text(prompt)
-                            .textSelection(.enabled)
-                    }
-                }
-
-                if let response = log.response {
-                    GroupBox("Response") {
-                        Text(response)
-                            .textSelection(.enabled)
+                if log.prompt != nil || log.response != nil {
+                    GroupBox("交互") {
+                        VStack(spacing: 12) {
+                            if let prompt = log.prompt {
+                                ChatBubbleView(text: prompt, role: .user)
+                            }
+                            if let response = log.response {
+                                ChatBubbleView(text: response, role: .assistant)
+                            }
+                        }
+                        .padding(.vertical, 4)
                     }
                 }
 
                 if let error = log.errorMessage {
                     GroupBox("错误") {
-                        Text(error)
-                            .foregroundColor(.red)
+                        ErrorBubbleView(message: error)
                     }
                 }
             }
