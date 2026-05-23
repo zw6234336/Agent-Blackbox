@@ -219,15 +219,15 @@ final class DatabaseService: ObservableObject {
         let endTs = endDate.timeIntervalSince1970
         guard endTs > startTs, bucketCount > 0 else { return [] }
         let bucketInterval = (endTs - startTs) / Double(bucketCount)
-        let range = logsTable.filter(timestamp >= startTs && timestamp <= endTs)
+        let range = logsTable.filter(timestamp >= startTs && timestamp < endTs)
         do {
             let rows = try db.prepare(range.select(timestamp, errorMessage))
             var counts = Array(repeating: 0, count: bucketCount)
             var errorCounts = Array(repeating: 0, count: bucketCount)
             for row in rows {
                 let t = row[timestamp]
-                let idx = min(Int((t - startTs) / bucketInterval), bucketCount - 1)
-                guard idx >= 0 else { continue }
+                let idx = Int((t - startTs) / bucketInterval)
+                guard idx >= 0 && idx < bucketCount else { continue }
                 counts[idx] += 1
                 if let err = row[errorMessage], !err.isEmpty {
                     errorCounts[idx] += 1
