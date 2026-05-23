@@ -98,7 +98,7 @@ final class FileMonitorService: ObservableObject {
         }
 
         let url = URL(fileURLWithPath: path)
-        guard matchesPattern(url.lastPathComponent) else { return }
+        guard matchesPattern(url) else { return }
 
         if detectedLogSet.insert(url).inserted {
             detectedLogs.insert(url, at: 0)
@@ -117,9 +117,23 @@ final class FileMonitorService: ObservableObject {
         }
     }
 
+    /// 兼容旧 API；优先使用 `matchesPattern(url:)`
     private func matchesPattern(_ fileName: String) -> Bool {
         filePatterns.contains { pattern in
             fileName.wildcardMatch(pattern)
+        }
+    }
+
+    /// pattern 含 `/` → 全路径匹配；否则 lastPathComponent 匹配
+    private func matchesPattern(_ url: URL) -> Bool {
+        let name = url.lastPathComponent
+        let path = url.path
+        return filePatterns.contains { pattern in
+            if pattern.contains("/") {
+                return path.wildcardMatch(pattern)
+            } else {
+                return name.wildcardMatch(pattern)
+            }
         }
     }
     
@@ -145,12 +159,12 @@ final class FileMonitorService: ObservableObject {
                     guard let resourceValues = try? fileURL.resourceValues(forKeys: Set(keys)),
                           resourceValues.isRegularFile ?? false else { continue }
                     
-                    if matchesPattern(fileURL.lastPathComponent) {
+                    if matchesPattern(fileURL) {
                         urlsToProcess.append(fileURL)
                     }
                 }
             } else {
-                if matchesPattern(url.lastPathComponent) {
+                if matchesPattern(url) {
                     urlsToProcess.append(url)
                 }
             }

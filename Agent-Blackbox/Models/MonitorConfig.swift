@@ -47,7 +47,12 @@ struct MonitorConfig: Codable, Equatable {
             
             // Continue.dev
             home + "/.continue/logs/",
-            home + "/.continue/sessions/"
+            home + "/.continue/sessions/",
+
+            // Amp (Sourcegraph)
+            home + "/.local/share/amp/threads/",
+            home + "/.local/share/amp/",
+            home + "/.cache/amp/logs/"
         ]
         
         for path in candidates {
@@ -66,7 +71,15 @@ struct MonitorConfig: Codable, Equatable {
         
         return paths
     }
-    var filePatterns: [String] = ["*.log", "*.txt", "*llm*.json", "*.jsonl", "state.vscdb", "session-store.db", "*.db", "api_conversation_history.json"]
+    /// 文件匹配 patterns。含 `/` 的对完整路径匹配，不含的对文件名匹配。
+    var filePatterns: [String] = [
+        "*.log", "*.txt", "*llm*.json", "*.jsonl",
+        "state.vscdb", "session-store.db", "*.db",
+        "api_conversation_history.json",
+        "T-*.json",                       // Amp threads
+        "*/chatSessions/*.json",          // VSCode Copilot chat sessions
+        "*/threads/T-*.json"              // Amp threads (path-scoped, redundant safety)
+    ]
     var isRecursive: Bool = true
     var refreshInterval: TimeInterval = 1.0
     var databasePath: String = NSHomeDirectory() + "/Library/Application Support/Agent-Blackbox/logs.db"

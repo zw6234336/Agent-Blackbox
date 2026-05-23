@@ -29,6 +29,8 @@ struct ContentView: View {
                 Section("系统") {
                     Label("监控", systemImage: "eye.circle")
                         .tag(3)
+                    Label("设置", systemImage: "gear")
+                        .tag(5)
                 }
             }
             .navigationTitle("Agent Blackbox")
@@ -46,6 +48,10 @@ struct ContentView: View {
                     MonitorView()
                 case 4:
                     RateLimitView()
+                case 5:
+                    SettingsView()
+                        .environmentObject(configService)
+                        .environmentObject(database)
                 default:
                     DashboardView()
                 }
