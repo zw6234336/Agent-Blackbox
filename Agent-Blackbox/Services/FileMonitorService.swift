@@ -176,20 +176,15 @@ final class FileMonitorService: ObservableObject {
         for fileURL in urlsToProcess {
             let results = await parser.parseAllEntries(at: fileURL)
             if !results.isEmpty {
-                for log in results {
-                    await database?.saveLog(log)
-                }
+                // 批量保存：每个文件的所有日志在一次事务中写入，仅触发一次 reloadLogs
+                await database?.saveLogs(results)
                 parsedCount += results.count
             }
         }
         
         Logger.shared.info("历史日志扫描完成！解析并保存了 \(parsedCount) 条历史记录。")
         
-        await MainActor.run {
-            database?.refreshDashboardStats()
-            Task {
-                await database?.reloadLogs()
-            }
-        }
+        // 扫描全部完成后统一刷新 Dashboard 统计（昂贵的聚合查询仅执行一次）
+        database?.refreshDashboardStats()
     }
 }

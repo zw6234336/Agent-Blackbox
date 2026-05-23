@@ -137,7 +137,6 @@ final class DatabaseService: ObservableObject {
 
     func saveLog(_ log: ParsedLog) async {
         guard let db else { return }
-
         do {
             let metadata = (try? String(data: JSONSerialization.data(withJSONObject: log.metadata), encoding: .utf8)) ?? "{}"
             let tags = (try? String(data: JSONSerialization.data(withJSONObject: log.tags), encoding: .utf8)) ?? "[]"
@@ -163,16 +162,63 @@ final class DatabaseService: ObservableObject {
                                           conversationId <- log.conversationId,
                                           metadataJSON <- metadata)
             try db.run(insert)
-            await reloadLogs()
+            // 轻量更新：仅当新行被成功插入时更新内存状态（避免全量 reloadLogs）
+            guard db.changes > 0 else { return }
+            var updated = logs
+            updated.insert(log, at: 0)
+            if updated.count > 100 { updated.removeLast() }
+            logs = updated
+            totalLogCount += 1
+            if let err = log.errorMessage, !err.isEmpty { errorLogCount += 1 }
+            if log.isBookmarked { bookmarkedCount += 1 }
         } catch {
             Logger.shared.error("日志保存失败: \(error.localizedDescription)")
+        }
+    }
+
+    /// 批量插入日志（使用事务），完成后仅做一次全量 reload。
+    /// 用于初始扫描等批量写入场景，避免每条日志触发一次 reload。
+    func saveLogs(_ logsToSave: [ParsedLog]) async {
+        guard let db, !logsToSave.isEmpty else { return }
+        do {
+            try db.transaction {
+                for log in logsToSave {
+                    let metadata = (try? String(data: JSONSerialization.data(withJSONObject: log.metadata), encoding: .utf8)) ?? "{}"
+                    let tags = (try? String(data: JSONSerialization.data(withJSONObject: log.tags), encoding: .utf8)) ?? "[]"
+                    let insert = logsTable.insert(or: .ignore,
+                                                  id <- log.id.uuidString,
+                                                  timestamp <- log.timestamp.timeIntervalSince1970,
+                                                  sourceFile <- log.sourceFile,
+                                                  providerRaw <- log.provider?.rawValue,
+                                                  modelName <- log.modelName,
+                                                  prompt <- log.prompt,
+                                                  response <- log.response,
+                                                  promptTokens <- log.promptTokens,
+                                                  completionTokens <- log.completionTokens,
+                                                  totalTokens <- log.totalTokens,
+                                                  estimatedCost <- log.estimatedCost,
+                                                  duration <- log.duration,
+                                                  statusCode <- log.statusCode,
+                                                  errorMessage <- log.errorMessage,
+                                                  isBookmarked <- log.isBookmarked,
+                                                  tagsJSON <- tags,
+                                                  notes <- log.notes,
+                                                  conversationId <- log.conversationId,
+                                                  metadataJSON <- metadata)
+                    try db.run(insert)
+                }
+            }
+            await reloadLogs()
+        } catch {
+            Logger.shared.error("批量日志保存失败: \(error.localizedDescription)")
         }
     }
 
     func reloadLogs(limit: Int = 100, offset: Int = 0) async {
         applySnapshot(fetchLogs(limit: limit, offset: offset))
         updateCountersFromDatabase()
-        refreshDashboardStats()
+        // 注意：不在这里调用 refreshDashboardStats()。
+        // Dashboard 统计在初始扫描完成后或 DashboardView 加载时单独触发，避免每次 reload 都执行昂贵的聚合查询。
     }
 
     func fetchLogs(limit: Int = 100, offset: Int = 0) -> [ParsedLog] {
