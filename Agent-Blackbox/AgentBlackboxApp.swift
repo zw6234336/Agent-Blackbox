@@ -7,6 +7,7 @@ struct AgentBlackboxApp: App {
     @StateObject private var configService = ConfigService()
     @StateObject private var rateTracker = RateLimitTrackerService()
     @StateObject private var compilationService = CompilationService()
+    @StateObject private var planDetector = PlanDetectionService()
 
     var body: some Scene {
         WindowGroup {
@@ -16,6 +17,7 @@ struct AgentBlackboxApp: App {
                 .environmentObject(configService)
                 .environmentObject(rateTracker)
                 .environmentObject(compilationService)
+                .environmentObject(planDetector)
                 .frame(minWidth: 1000, minHeight: 600)
                 .task {
                     database.initializeIfNeeded()
@@ -29,6 +31,9 @@ struct AgentBlackboxApp: App {
                         fileMonitor.updateFilePatterns(configService.config.filePatterns)
                         fileMonitor.startMonitoring(paths: paths)
                     }
+
+                    // 后台自动检测本地套餐授权（首次启动）
+                    await planDetector.detectAll()
                 }
         }
         .windowStyle(.titleBar)

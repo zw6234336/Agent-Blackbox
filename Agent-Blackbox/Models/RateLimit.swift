@@ -181,23 +181,23 @@ struct ProviderUsageSnapshot: Identifiable, Hashable {
 /// 用户配置的限额（按 provider 维度；无值表示不限制）
 struct ProviderRateLimit: Codable, Hashable {
     /// 每分钟请求数上限
-    var rpmLimit: Int?
+    var rpmLimit: Int? = nil
     /// 每分钟 token 上限（对应 Anthropic ITPM / OpenAI TPM）
-    var tpmLimit: Int?
+    var tpmLimit: Int? = nil
     /// 1 小时请求上限
-    var requestsPerHourLimit: Int?
+    var requestsPerHourLimit: Int? = nil
     /// 1 小时 token 上限
-    var tokensPerHourLimit: Int?
+    var tokensPerHourLimit: Int? = nil
     /// 今日 token 上限
-    var dailyTokenLimit: Int?
+    var dailyTokenLimit: Int? = nil
     /// 今日预算 (USD)
-    var dailyCostLimit: Double?
+    var dailyCostLimit: Double? = nil
     /// 月度预算 (USD)
-    var monthlyCostLimit: Double?
+    var monthlyCostLimit: Double? = nil
     /// 月度请求数上限（适用于 Copilot Pro 等按月请求计费的套餐）
-    var monthlyRequestLimit: Int?
+    var monthlyRequestLimit: Int? = nil
     /// 5 小时请求数上限（适用于 Kimi 等消费套餐的滑动窗口）
-    var fiveHourRequestLimit: Int?
+    var fiveHourRequestLimit: Int? = nil
 
     // MARK: - 官方套餐默认值（基于各厂商公开文档）
 

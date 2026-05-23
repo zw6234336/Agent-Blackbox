@@ -4,8 +4,10 @@ struct RateLimitView: View {
     @EnvironmentObject var tracker: RateLimitTrackerService
     @EnvironmentObject var configService: ConfigService
     @EnvironmentObject var database: DatabaseService
+    @EnvironmentObject var planDetector: PlanDetectionService
 
     @State private var editingProvider: LLMProvider? = nil
+    @State private var showingApplyConfirm = false
 
     private var riskCount: Int {
         tracker.snapshots.filter { $0.overallSeverity != .normal }.count
@@ -21,6 +23,8 @@ struct RateLimitView: View {
                 header
 
                 overviewStrip
+
+                detectedPlansBanner
 
                 if let g = tracker.globalSnapshot, !g.windows.isEmpty {
                     GlobalSummaryCard(snapshot: g)
@@ -76,12 +80,30 @@ struct RateLimitView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                Button {
-                    tracker.refresh()
-                } label: {
-                    Label("刷新", systemImage: "arrow.clockwise")
+                HStack(spacing: 8) {
+                    Button {
+                        Task { await planDetector.detectAll() }
+                    } label: {
+                        if planDetector.isDetecting {
+                            HStack(spacing: 6) {
+                                ProgressView().scaleEffect(0.75)
+                                Text("检测中...")
+                            }
+                        } else {
+                            Label("检测套餐", systemImage: "person.badge.key.fill")
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(planDetector.isDetecting)
+                    .help("从本地凭证（GitHub CLI、Cursor、Claude Desktop）自动检测当前套餐授权")
+
+                    Button {
+                        tracker.refresh()
+                    } label: {
+                        Label("刷新", systemImage: "arrow.clockwise")
+                    }
+                    .buttonStyle(.bordered)
                 }
-                .buttonStyle(.bordered)
             }
         }
     }
@@ -139,6 +161,65 @@ struct RateLimitView: View {
             Spacer()
         }
         .cardStyle()
+    }
+
+    // MARK: - Detected Plans Banner
+
+    @ViewBuilder
+    private var detectedPlansBanner: some View {
+        if !planDetector.detectedPlans.isEmpty || !planDetector.statusMessage.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 8) {
+                    Image(systemName: planDetector.detectedPlans.isEmpty ? "info.circle" : "checkmark.seal.fill")
+                        .foregroundStyle(planDetector.detectedPlans.isEmpty ? Color.secondary : Color.successGreen)
+                    Text(planDetector.detectedPlans.isEmpty ? "套餐检测" : "已检测到 \(planDetector.detectedPlans.count) 个本地套餐")
+                        .font(.subheadline.bold())
+                    Spacer()
+                    if !planDetector.detectedPlans.isEmpty {
+                        Button {
+                            planDetector.applyToConfig(configService)
+                            tracker.refresh()
+                            showingApplyConfirm = true
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { showingApplyConfirm = false }
+                        } label: {
+                            Label(showingApplyConfirm ? "已应用 ✓" : "应用到配置", systemImage: showingApplyConfirm ? "checkmark" : "arrow.down.circle")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(showingApplyConfirm)
+                    }
+                }
+
+                if !planDetector.statusMessage.isEmpty {
+                    Text(planDetector.statusMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                if !planDetector.detectedPlans.isEmpty {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 200), spacing: 10)], spacing: 10) {
+                        ForEach(Array(planDetector.detectedPlans.values)) { plan in
+                            HStack(spacing: 10) {
+                                Image(systemName: plan.provider.iconName)
+                                    .foregroundStyle(plan.provider.brandColor)
+                                    .frame(width: 20)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(plan.planName)
+                                        .font(.caption.bold())
+                                    Text(plan.source)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                            }
+                            .padding(10)
+                            .background(Color.primary.opacity(0.04))
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                        }
+                    }
+                }
+            }
+            .cardStyle()
+        }
     }
 
     private var emptyState: some View {
@@ -212,6 +293,7 @@ private struct GlobalSummaryCard: View {
 // MARK: - Provider Card
 
 private struct ProviderUsageCard: View {
+    @EnvironmentObject var planDetector: PlanDetectionService
     let snapshot: ProviderUsageSnapshot
     let onEdit: () -> Void
 
@@ -222,6 +304,9 @@ private struct ProviderUsageCard: View {
                     .foregroundStyle(snapshot.provider.brandColor)
                 Text(snapshot.provider.displayName)
                     .font(.headline)
+                if let plan = planDetector.detectedPlans[snapshot.provider] {
+                    DetectedPlanBadge(planName: plan.planName, source: plan.source)
+                }
                 Spacer()
                 SeverityBadge(severity: snapshot.overallSeverity)
                 Button(action: onEdit) {
@@ -407,6 +492,28 @@ struct RateWindowBar: View {
         case .onTrack:         return .secondary
         case .slightlyBehind, .behind, .farBehind: return .successGreen
         }
+    }
+}
+
+// MARK: - Detected Plan Badge
+
+private struct DetectedPlanBadge: View {
+    let planName: String
+    let source: String
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "person.badge.key.fill")
+                .font(.system(size: 9))
+            Text(planName)
+                .font(.system(size: 10, weight: .medium))
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(Color.accentColor.opacity(0.12))
+        .foregroundStyle(Color.accentColor)
+        .clipShape(Capsule())
+        .help("套餐来源：\(source)")
     }
 }
 
