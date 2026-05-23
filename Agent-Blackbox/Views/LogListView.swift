@@ -6,7 +6,11 @@ struct LogListView: View {
     @State private var selectedLog: ParsedLog?
     @State private var searchResults: [ParsedLog] = []
     @State private var showFilters = false
-    
+    // 过滤结果缓存（异步更新，避免在每次渲染时同步执行 DB 查询）
+    @State private var filteredLogsCache: [ParsedLog] = []
+    @State private var filterRefreshTask: Task<Void, Never>? = nil
+    @State private var searchDebounceTask: Task<Void, Never>? = nil
+
     // Filter states
     @State private var filterProvider: LLMProvider? = nil
     @State private var filterModel: String? = nil
@@ -16,18 +20,8 @@ struct LogListView: View {
     @State private var availableProviders: [LLMProvider] = []
 
     private var filteredLogs: [ParsedLog] {
-        if !searchText.isEmpty {
-            return searchResults
-        }
-        if filterProvider != nil || filterModel != nil || filterHasError != nil || filterBookmarked {
-            return database.filterLogs(
-                provider: filterProvider,
-                model: filterModel,
-                hasError: filterHasError,
-                bookmarkedOnly: filterBookmarked
-            )
-        }
-        return database.logs
+        if !searchText.isEmpty { return searchResults }
+        return filteredLogsCache
     }
 
     var body: some View {
@@ -64,16 +58,40 @@ struct LogListView: View {
         }
         .task {
             await database.reloadLogs()
-            refreshSearchResults()
+            refreshFilteredLogs()
             availableModels = database.fetchDistinctModels()
             availableProviders = database.fetchDistinctProviders()
         }
         .onChange(of: searchText) {
-            refreshSearchResults()
+            // 搜索框有输入时使用防抖，避免每次击键都触发 DB 查询
+            searchDebounceTask?.cancel()
+            if searchText.isEmpty {
+                searchResults = []
+            } else {
+                searchDebounceTask = Task {
+                    try? await Task.sleep(nanoseconds: 200_000_000)
+                    guard !Task.isCancelled else { return }
+                    refreshSearchResults()
+                }
+            }
         }
         .onChange(of: database.logs) {
-            refreshSearchResults()
+            // database.logs 变化时（实时监控写入新日志），使用防抖刷新列表
+            // 避免批量写入期间每条日志都触发 DB 搜索查询
+            searchDebounceTask?.cancel()
+            searchDebounceTask = Task {
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                guard !Task.isCancelled else { return }
+                refreshFilteredLogs()
+                if !searchText.isEmpty { refreshSearchResults() }
+                availableModels = database.fetchDistinctModels()
+                availableProviders = database.fetchDistinctProviders()
+            }
         }
+        .onChange(of: filterProvider) { refreshFilteredLogs() }
+        .onChange(of: filterModel) { refreshFilteredLogs() }
+        .onChange(of: filterHasError) { refreshFilteredLogs() }
+        .onChange(of: filterBookmarked) { refreshFilteredLogs() }
     }
     
     // MARK: - Filter Bar
@@ -145,6 +163,26 @@ struct LogListView: View {
             Divider()
         }
         .transition(.move(edge: .top).combined(with: .opacity))
+    }
+
+    private func refreshFilteredLogs() {
+        filterRefreshTask?.cancel()
+        filterRefreshTask = Task {
+            let hasFilter = filterProvider != nil || filterModel != nil || filterHasError != nil || filterBookmarked
+            let result: [ParsedLog]
+            if hasFilter {
+                result = database.filterLogs(
+                    provider: filterProvider,
+                    model: filterModel,
+                    hasError: filterHasError,
+                    bookmarkedOnly: filterBookmarked
+                )
+            } else {
+                result = database.logs
+            }
+            guard !Task.isCancelled else { return }
+            filteredLogsCache = result
+        }
     }
 
     private func refreshSearchResults() {
