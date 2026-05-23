@@ -16,6 +16,7 @@ enum LLMProvider: String, Codable, CaseIterable, Identifiable {
     case kimi
     case zhipu
     case amp
+    case antigravity
     case custom
     
     var id: String { rawValue }
@@ -37,6 +38,7 @@ enum LLMProvider: String, Codable, CaseIterable, Identifiable {
         case .kimi: return "月之暗面 Kimi"
         case .zhipu: return "智谱清言 GLM"
         case .amp: return "Amp (Sourcegraph)"
+        case .antigravity: return "Antigravity (Google)"
         case .custom: return "自定义"
         }
     }
@@ -58,6 +60,7 @@ enum LLMProvider: String, Codable, CaseIterable, Identifiable {
         case .kimi: return "moon.fill"
         case .zhipu: return "cpu.fill"
         case .amp: return "bolt.shield.fill"
+        case .antigravity: return "atom"
         case .custom: return "gearshape"
         }
     }
@@ -79,6 +82,7 @@ enum LLMProvider: String, Codable, CaseIterable, Identifiable {
         case .kimi: return Color(hue: 0.05, saturation: 0.8, brightness: 0.85)
         case .zhipu: return Color(hue: 0.55, saturation: 0.8, brightness: 0.7)
         case .amp: return Color(hue: 0.85, saturation: 0.85, brightness: 0.85)
+        case .antigravity: return Color(hue: 0.58, saturation: 0.9, brightness: 0.85)
         case .custom: return Color(hue: 0.0, saturation: 0.0, brightness: 0.6)
         }
     }
@@ -143,6 +147,12 @@ enum LLMProvider: String, Codable, CaseIterable, Identifiable {
                 home + "/.local/share/amp/threads/",
                 home + "/.local/share/amp/",
                 home + "/.cache/amp/logs/"
+            ]
+        case .antigravity:
+            return [
+                home + "/Library/Logs/Antigravity/",
+                home + "/Library/Application Support/Antigravity/logs/",
+                home + "/Library/Application Support/Antigravity IDE/logs/"
             ]
         default:
             return []

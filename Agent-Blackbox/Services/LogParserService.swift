@@ -8,6 +8,7 @@ final class LogParserService: Sendable {
         ClineParser(),
         ClaudeCodeCLIParser(),
         AmpThreadParser(),
+        AntigravityParser(),
         CopilotChatSessionParser(),
         GenericLLMParser()  // fallback, always last
     ]

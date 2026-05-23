@@ -89,6 +89,7 @@ extension LogParser {
         if let sourceFile = sourceFile?.lowercased() {
             if sourceFile.contains("copilot") { return .copilot }
             if sourceFile.contains("cursor") && sourceFile.hasSuffix(".vscdb") { return .cursor }
+            if sourceFile.contains("antigravity") { return .antigravity }
         }
         
         guard let model = model?.lowercased() else {
