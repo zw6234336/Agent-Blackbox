@@ -130,7 +130,6 @@ final class CompilationService: ObservableObject {
 
     func deleteCompilation(id: UUID) {
         guard let db else { return }
-        // Remove output file
         if let comp = compilations.first(where: { $0.id == id }),
            let path = comp.outputFilePath {
             try? FileManager.default.removeItem(atPath: path)
@@ -155,7 +154,14 @@ final class CompilationService: ObservableObject {
     // MARK: - Generation Lifecycle
 
     func startGeneration(id: UUID) {
+        // Guard against concurrent generation
+        guard !isGenerating else { return }
         guard var compilation = compilations.first(where: { $0.id == id }) else { return }
+
+        // Cancel any leftover task
+        generationTask?.cancel()
+        generationTask = nil
+
         compilation.status = .generating
         compilation.progress = 0
         compilation.progressMessage = "正在查询日志..."
@@ -164,88 +170,9 @@ final class CompilationService: ObservableObject {
         loadCompilations()
         isGenerating = true
 
+        let compilationId = compilation.id
         generationTask = Task {
-            let logs = fetchLogsForCompilation(compilation)
-            guard !Task.isCancelled else { return }
-
-            if logs.isEmpty {
-                var c = compilation
-                c.status = .completed
-                c.progress = 1.0
-                c.progressMessage = "没有找到匹配的日志"
-                c.updatedAt = Date()
-                saveCompilation(c)
-                loadCompilations()
-                isGenerating = false
-                return
-            }
-
-            let total = logs.count
-            let batchSize = 50
-            var rendered = renderHeader(compilation, logCount: total)
-            var processed = 0
-
-            // Group by provider then date
-            let grouped = groupLogs(logs)
-
-            for (provider, byDate) in grouped {
-                guard !Task.isCancelled else { return }
-
-                rendered += renderProviderHeader(provider, logs: byDate)
-
-                for (date, dateLogs) in byDate {
-                    guard !Task.isCancelled else { return }
-
-                    rendered += renderDateHeader(date)
-                    let conversations = groupByConversation(dateLogs)
-
-                    for (convId, convLogs) in conversations {
-                        guard !Task.isCancelled else { return }
-
-                        rendered += renderConversation(convId, logs: convLogs, format: compilation.outputFormat)
-
-                        processed += convLogs.count
-                        let prog = Double(processed) / Double(total)
-
-                        var c = compilation
-                        c.progress = prog
-                        c.progressMessage = "已处理 \(processed)/\(total) 条日志..."
-                        c.updatedAt = Date()
-                        saveCompilation(c)
-
-                        if processed % batchSize == 0 {
-                            loadCompilations()
-                        }
-                    }
-                }
-            }
-
-            guard !Task.isCancelled else { return }
-
-            // Statistics
-            let stats = computeStats(logs)
-
-            rendered += renderSummary(compilation, stats: stats, totalLogs: total)
-
-            // Write output
-            let url = writeOutput(compilation: compilation, content: rendered)
-
-            var final = compilation
-            final.status = .completed
-            final.progress = 1.0
-            final.progressMessage = "完成"
-            final.totalLogCount = total
-            final.lastCompiledTimestamp = logs.first?.timestamp ?? Date()
-            final.outputFilePath = url?.path
-            final.outputFileSize = url.flatMap { (try? FileManager.default.attributesOfItem(atPath: $0.path)[.size] as? Int64) }
-            final.compiledProviders = stats.providers
-            final.compiledModels = stats.models
-            final.compiledTokenTotal = stats.totalTokens
-            final.compiledCostTotal = stats.totalCost
-            final.updatedAt = Date()
-            saveCompilation(final)
-            loadCompilations()
-            isGenerating = false
+            await performGeneration(compilationId)
         }
     }
 
@@ -282,6 +209,7 @@ final class CompilationService: ObservableObject {
     }
 
     func appendNewLogs(id: UUID) {
+        guard !isGenerating else { return }
         guard var compilation = compilations.first(where: { $0.id == id }),
               compilation.status == .completed else { return }
 
@@ -293,64 +221,208 @@ final class CompilationService: ObservableObject {
         loadCompilations()
         isGenerating = true
 
+        let compilationId = compilation.id
         generationTask = Task {
-            // Fetch only logs newer than lastCompiledTimestamp
-            var appendComp = compilation
-            appendComp.startDate = compilation.lastCompiledTimestamp
-            let newLogs = fetchLogsForCompilation(appendComp)
+            await performAppend(compilationId)
+        }
+    }
 
-            guard !Task.isCancelled else { return }
+    // MARK: - Generation Core
 
-            if newLogs.isEmpty {
-                var c = compilation
-                c.progress = 1.0
-                c.progressMessage = "没有新的日志需要追加"
-                c.updatedAt = Date()
-                saveCompilation(c)
-                loadCompilations()
-                isGenerating = false
+    private func performGeneration(_ compilationId: UUID) async {
+        guard var compilation = compilations.first(where: { $0.id == compilationId }) else {
+            isGenerating = false
+            return
+        }
+
+        let logs = fetchLogsForCompilation(compilation)
+        guard !Task.isCancelled else {
+            await handleCancelled(compilationId)
+            return
+        }
+
+        if logs.isEmpty {
+            var c = compilation
+            c.status = .completed
+            c.progress = 1.0
+            c.progressMessage = "没有找到匹配的日志"
+            c.updatedAt = Date()
+            saveCompilation(c)
+            loadCompilations()
+            isGenerating = false
+            return
+        }
+
+        let total = logs.count
+        let batchSize = 50
+        var rendered = renderHeader(compilation, logCount: total)
+
+        // Add JSON opening brace if needed
+        if compilation.outputFormat == .json {
+            rendered = "{\n\"metadata\": {\n  \"name\": \"\(compilation.name.jsonEscaped)\",\n  \"generatedAt\": \"\(Date().formattedDate)\"\n},\n\"providers\": {\n"
+        }
+
+        var processed = 0
+        let grouped = groupLogs(logs)
+
+        for (provider, byDate) in grouped {
+            guard !Task.isCancelled else {
+                await handleCancelled(compilationId)
                 return
             }
 
-            let existingContent: String
-            if let path = compilation.outputFilePath,
-               let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
-               let str = String(data: data, encoding: .utf8) {
-                existingContent = str
-            } else {
-                existingContent = ""
+            rendered += renderProviderHeader(provider, logs: byDate)
+
+            for (date, dateLogs) in byDate {
+                guard !Task.isCancelled else {
+                    await handleCancelled(compilationId)
+                    return
+                }
+
+                rendered += renderDateHeader(date)
+                let conversations = groupByConversation(dateLogs)
+
+                for (convId, convLogs) in conversations {
+                    guard !Task.isCancelled else {
+                        await handleCancelled(compilationId)
+                        return
+                    }
+
+                    rendered += renderConversation(convId, logs: convLogs, format: compilation.outputFormat)
+
+                    processed += convLogs.count
+                    let prog = Double(processed) / Double(total)
+
+                    var c = compilation
+                    c.progress = prog
+                    c.progressMessage = "已处理 \(processed)/\(total) 条日志..."
+                    c.updatedAt = Date()
+                    saveCompilation(c)
+
+                    if processed % batchSize == 0 {
+                        loadCompilations()
+                    }
+                }
             }
+        }
 
-            let newContent = renderAppendix(newLogs, format: compilation.outputFormat)
-            let fullContent = existingContent + "\n\n" + newContent
+        guard !Task.isCancelled else {
+            await handleCancelled(compilationId)
+            return
+        }
 
-            let url = writeOutput(compilation: compilation, content: fullContent)
+        let stats = computeStats(logs)
+        rendered += renderSummary(compilation, stats: stats, totalLogs: total)
 
-            var final = compilation
-            final.status = .completed
-            final.progress = 1.0
-            final.progressMessage = "已追加 \(newLogs.count) 条新日志"
-            final.totalLogCount += newLogs.count
-            final.appendCount += 1
-            final.lastCompiledTimestamp = newLogs.first?.timestamp ?? final.lastCompiledTimestamp
-            final.outputFilePath = url?.path
-            final.outputFileSize = url.flatMap { (try? FileManager.default.attributesOfItem(atPath: $0.path)[.size] as? Int64) }
-            final.updatedAt = Date()
+        let url = writeOutput(compilation: compilation, content: rendered)
 
-            // Update stats
-            let allStats = computeStats(newLogs)
-            var existingProviders = final.compiledProviders
-            for p in allStats.providers where !existingProviders.contains(p) {
-                existingProviders.append(p)
-            }
-            final.compiledProviders = existingProviders
-            final.compiledTokenTotal += allStats.totalTokens
-            final.compiledCostTotal += allStats.totalCost
+        var final = compilation
+        final.status = .completed
+        final.progress = 1.0
+        final.progressMessage = "完成"
+        final.totalLogCount = total
+        final.lastCompiledTimestamp = logs.last?.timestamp ?? Date()
+        final.outputFilePath = url?.path
+        final.outputFileSize = url.flatMap { (try? FileManager.default.attributesOfItem(atPath: $0.path)[.size] as? Int64) }
+        final.compiledProviders = stats.providers
+        final.compiledModels = stats.models
+        final.compiledTokenTotal = stats.totalTokens
+        final.compiledCostTotal = stats.totalCost
+        final.updatedAt = Date()
+        saveCompilation(final)
+        loadCompilations()
+        isGenerating = false
+    }
 
-            saveCompilation(final)
+    private func performAppend(_ compilationId: UUID) async {
+        guard let compilation = compilations.first(where: { $0.id == compilationId }) else {
+            isGenerating = false
+            return
+        }
+
+        // Fetch only logs strictly newer than lastCompiledTimestamp
+        var appendComp = compilation
+        appendComp.startDate = compilation.lastCompiledTimestamp
+        appendComp.endDate = nil
+        let newLogs = fetchLogsForCompilation(appendComp).filter { log in
+            // Strictly greater than to avoid duplicates
+            guard let lastTs = compilation.lastCompiledTimestamp else { return true }
+            return log.timestamp > lastTs
+        }
+
+        guard !Task.isCancelled else {
+            await handleCancelled(compilationId)
+            return
+        }
+
+        if newLogs.isEmpty {
+            var c = compilation
+            c.status = .completed
+            c.progress = 1.0
+            c.progressMessage = "没有新的日志需要追加"
+            c.updatedAt = Date()
+            saveCompilation(c)
             loadCompilations()
             isGenerating = false
+            return
         }
+
+        let existingContent: String
+        if let path = compilation.outputFilePath,
+           let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+           let str = String(data: data, encoding: .utf8) {
+            existingContent = str
+        } else {
+            existingContent = ""
+        }
+
+        let newContent = renderAppendix(newLogs, format: compilation.outputFormat)
+        let fullContent = existingContent + "\n\n" + newContent
+
+        let url = writeOutput(compilation: compilation, content: fullContent)
+
+        var final = compilation
+        final.status = .completed
+        final.progress = 1.0
+        final.progressMessage = "已追加 \(newLogs.count) 条新日志"
+        final.totalLogCount += newLogs.count
+        final.appendCount += 1
+        final.lastCompiledTimestamp = newLogs.last?.timestamp ?? final.lastCompiledTimestamp
+        final.outputFilePath = url?.path
+        final.outputFileSize = url.flatMap { (try? FileManager.default.attributesOfItem(atPath: $0.path)[.size] as? Int64) }
+        final.updatedAt = Date()
+
+        // Update stats including models
+        let appendStats = computeStats(newLogs)
+        var existingProviders = final.compiledProviders
+        var existingModels = final.compiledModels
+        for p in appendStats.providers where !existingProviders.contains(p) {
+            existingProviders.append(p)
+        }
+        for m in appendStats.models where !existingModels.contains(m) {
+            existingModels.append(m)
+        }
+        final.compiledProviders = existingProviders
+        final.compiledModels = existingModels
+        final.compiledTokenTotal += appendStats.totalTokens
+        final.compiledCostTotal += appendStats.totalCost
+
+        saveCompilation(final)
+        loadCompilations()
+        isGenerating = false
+    }
+
+    /// Reset state if task was cancelled without explicit pause/cancel call
+    private func handleCancelled(_ compilationId: UUID) async {
+        if var c = compilations.first(where: { $0.id == compilationId }),
+           c.status == .generating {
+            c.status = .paused
+            c.progressMessage = "已暂停于 \(c.progress.formattedPercent)"
+            c.updatedAt = Date()
+            saveCompilation(c)
+            loadCompilations()
+        }
+        isGenerating = false
     }
 
     // MARK: - Output Helpers
@@ -370,6 +442,16 @@ final class CompilationService: ObservableObject {
         return str
     }
 
+    /// Read only the first N characters for preview (avoids loading large files)
+    func getOutputPreview(for compilation: LogCompilation, maxLength: Int = 10000) -> String? {
+        guard let path = compilation.outputFilePath else { return nil }
+        guard let handle = try? FileHandle(forReadingFrom: URL(fileURLWithPath: path)) else { return nil }
+        defer { try? handle.close() }
+        let data = handle.readData(ofLength: maxLength * 4) // UTF-8 multi-byte safety
+        guard let str = String(data: data, encoding: .utf8) else { return nil }
+        return String(str.prefix(maxLength))
+    }
+
     func revealInFinder(id: UUID) {
         guard let comp = compilations.first(where: { $0.id == id }),
               let url = getOutputURL(for: comp) else { return }
@@ -383,7 +465,7 @@ final class CompilationService: ObservableObject {
         NSPasteboard.general.setString(content, forType: .string)
     }
 
-    // MARK: - Log Fetching (direct SQLite query, no 500 limit)
+    // MARK: - Log Fetching
 
     private func fetchLogsForCompilation(_ compilation: LogCompilation) -> [ParsedLog] {
         guard let db else { return [] }
@@ -412,7 +494,6 @@ final class CompilationService: ObservableObject {
 
             var query = logsTable.order(timestampCol.asc)
 
-            // Provider filtering done in-memory after query
             if let start = compilation.startDate {
                 query = query.filter(timestampCol >= start.timeIntervalSince1970)
             }
@@ -452,7 +533,6 @@ final class CompilationService: ObservableObject {
                 )
             }
 
-            // Provider filtering in-memory
             if !compilation.providerFilters.isEmpty {
                 return allLogs.filter { log in
                     guard let p = log.provider?.rawValue else { return false }
@@ -473,25 +553,22 @@ final class CompilationService: ObservableObject {
         df.dateFormat = "yyyy-MM-dd"
         df.locale = Locale(identifier: "zh_CN")
 
-        // Group by provider
         var byProvider: [LLMProvider: [ParsedLog]] = [:]
         for log in logs {
             let provider = log.provider ?? .custom
             byProvider[provider, default: []].append(log)
         }
 
-        // Sort providers alphabetically by displayName
         let sortedProviders = byProvider.keys.sorted { $0.displayName < $1.displayName }
 
         return sortedProviders.map { provider in
             let providerLogs = byProvider[provider]!
-            // Group by date
             var byDate: [String: [ParsedLog]] = [:]
             for log in providerLogs {
                 let dateKey = df.string(from: log.timestamp)
                 byDate[dateKey, default: []].append(log)
             }
-            let sortedDates = byDate.keys.sorted().reversed() // newest first
+            let sortedDates = byDate.keys.sorted().reversed()
             return (provider, sortedDates.map { ($0, byDate[$0]!) })
         }
     }
@@ -524,11 +601,15 @@ final class CompilationService: ObservableObject {
         let providerNames = compilation.providerFilters.compactMap { LLMProvider(rawValue: $0)?.displayName }
         let providersStr = providerNames.isEmpty ? "全部" : providerNames.joined(separator: ", ")
 
-        return """
-        # \(compilation.name)
+        var desc = ""
+        if !compilation.description.isEmpty {
+            desc = "> \(compilation.description.jsonEscaped)\n"
+        }
 
-        > \(compilation.description.isEmpty ? "" : compilation.description)
-        > 生成时间: \(df.string(from: Date()))
+        return """
+        # \(compilation.name.jsonEscaped)
+
+        \(desc)> 生成时间: \(df.string(from: Date()))
         > 覆盖范围: \(compilation.startDate.map { df.string(from: $0) } ?? "起始") 至 \(compilation.endDate.map { df.string(from: $0) } ?? "现在")
         > 提供商: \(providersStr)
         > 日志数量: \(logCount) 条
@@ -563,7 +644,7 @@ final class CompilationService: ObservableObject {
         tf.dateFormat = "HH:mm:ss"
 
         var parts: [String] = []
-        let label = convId.map { "对话 \($0.prefix(8))" } ?? "独立记录"
+        let label = convId.map { "对话 \(String($0.prefix(8)))" } ?? "独立记录"
         parts.append("#### \(label) (\(logs.count) 条)\n")
 
         for log in logs {
@@ -576,17 +657,17 @@ final class CompilationService: ObservableObject {
             if let prompt = log.prompt, !prompt.isEmpty {
                 let meta = [tokens, cost].filter { !$0.isEmpty }.joined(separator: " | ")
                 parts.append("**[\(time)] User** (\(model)\(meta.isEmpty ? "" : " | \(meta)")):\n")
-                parts.append("\(prompt.trimmingCharacters(in: .whitespacesAndNewlines))\n")
+                parts.append("\n\(prompt.trimmingCharacters(in: .whitespacesAndNewlines))\n")
             }
 
             if let response = log.response, !response.isEmpty {
                 let meta = [duration, tokens, cost].filter { !$0.isEmpty }.joined(separator: " | ")
                 parts.append("**[\(time)] Assistant** (\(meta.isEmpty ? "" : "\(meta)")):\n")
-                parts.append("\(response.trimmingCharacters(in: .whitespacesAndNewlines))\n")
+                parts.append("\n\(response.trimmingCharacters(in: .whitespacesAndNewlines))\n")
             }
 
             if let error = log.errorMessage, !error.isEmpty {
-                parts.append("**[\(time)] Error:** \(error)\n")
+                parts.append("**[\(time)] Error:** \(error.jsonEscaped)\n")
             }
         }
 
@@ -595,9 +676,11 @@ final class CompilationService: ObservableObject {
     }
 
     private func renderConversationJSON(_ convId: String?, logs: [ParsedLog]) -> String {
-        let turns = logs.map { log -> String in
-            let tf = DateFormatter()
-            tf.dateFormat = "yyyy-MM-dd'T'HH:mm:ssZ"
+        let tf = DateFormatter()
+        tf.dateFormat = "yyyy-MM-dd'T'HH:mm:ssZ"
+
+        var turns: [[String: Any]] = []
+        for log in logs {
             var obj: [String: Any] = [
                 "timestamp": tf.string(from: log.timestamp),
                 "model": log.modelName ?? "unknown"
@@ -608,15 +691,15 @@ final class CompilationService: ObservableObject {
             if let c = log.estimatedCost { obj["cost"] = c }
             if let d = log.duration { obj["duration"] = d }
             if let e = log.errorMessage { obj["error"] = e }
-
-            if let data = try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys]),
-               let str = String(data: data, encoding: .utf8) {
-                return str
-            }
-            return "{}"
+            turns.append(obj)
         }
-        let convLabel = convId ?? "standalone"
-        return "\"conversation_\(convLabel.prefix(8))\": [\n\(turns.joined(separator: ",\n"))\n],\n"
+
+        let convLabel = convId.map { String($0.prefix(8)) } ?? "standalone"
+        guard let data = try? JSONSerialization.data(withJSONObject: turns, options: [.prettyPrinted, .sortedKeys]),
+              let str = String(data: data, encoding: .utf8) else {
+            return ""
+        }
+        return "\"conversation_\(convLabel)\": \(str),\n"
     }
 
     private func renderConversationPlainText(_ convId: String?, logs: [ParsedLog]) -> String {
@@ -624,7 +707,7 @@ final class CompilationService: ObservableObject {
         tf.dateFormat = "HH:mm:ss"
 
         var parts: [String] = []
-        let label = convId.map { "对话 \($0.prefix(8))" } ?? "独立记录"
+        let label = convId.map { "对话 \(String($0.prefix(8)))" } ?? "独立记录"
         parts.append("[\(label) - \(logs.count) 条]\n")
 
         for log in logs {
@@ -687,7 +770,7 @@ final class CompilationService: ObservableObject {
 
             """
         case .json:
-            let footer = "\"summary\": {\n"
+            return "\"summary\": {\n"
                 + "  \"totalLogs\": \(totalLogs),\n"
                 + "  \"providers\": \(stats.providers.count),\n"
                 + "  \"models\": \(stats.models.count),\n"
@@ -695,7 +778,6 @@ final class CompilationService: ObservableObject {
                 + "  \"totalCost\": \(stats.totalCost),\n"
                 + "  \"errors\": \(stats.errorCount)\n"
                 + "}\n}\n"
-            return footer
         case .plainText:
             return """
 
@@ -748,7 +830,10 @@ final class CompilationService: ObservableObject {
             let safeName = compilation.name
                 .replacingOccurrences(of: "/", with: "_")
                 .replacingOccurrences(of: ":", with: "_")
-            let filename = "\(safeName)-\(compilation.id.uuidString.prefix(8)).\(compilation.outputFormat.fileExtension)"
+                .replacingOccurrences(of: "\\", with: "_")
+                .replacingOccurrences(of: "\0", with: "")
+            let fallbackName = safeName.isEmpty ? "compilation" : safeName
+            let filename = "\(fallbackName)-\(compilation.id.uuidString.prefix(8)).\(compilation.outputFormat.fileExtension)"
             let url = compilationsDir.appendingPathComponent(filename)
             try content.write(to: url, atomically: true, encoding: .utf8)
             return url
@@ -797,30 +882,7 @@ final class CompilationService: ObservableObject {
             if count > 0 {
                 try db.run(target.update(values))
             } else {
-                try db.run(compilationsTable.insert(
-                    colId <- compilation.id.uuidString,
-                    colName <- compilation.name,
-                    colDesc <- compilation.description,
-                    colCreatedAt <- compilation.createdAt.timeIntervalSince1970,
-                    colUpdatedAt <- compilation.updatedAt.timeIntervalSince1970,
-                    colStatus <- compilation.status.rawValue,
-                    colOutputFormat <- compilation.outputFormat.rawValue,
-                    colProviderFilters <- filters,
-                    colStartDate <- compilation.startDate?.timeIntervalSince1970,
-                    colEndDate <- compilation.endDate?.timeIntervalSince1970,
-                    colBookmarkedOnly <- compilation.bookmarkedOnly,
-                    colLastCompiledTs <- compilation.lastCompiledTimestamp?.timeIntervalSince1970,
-                    colTotalLogCount <- compilation.totalLogCount,
-                    colAppendCount <- compilation.appendCount,
-                    colProgress <- compilation.progress,
-                    colProgressMsg <- compilation.progressMessage,
-                    colOutputPath <- compilation.outputFilePath,
-                    colOutputSize <- compilation.outputFileSize,
-                    colCompiledProviders <- compProviders,
-                    colCompiledModels <- compModels,
-                    colCompiledTokenTotal <- compilation.compiledTokenTotal,
-                    colCompiledCostTotal <- compilation.compiledCostTotal
-                ))
+                try db.run(compilationsTable.insert([colId <- compilation.id.uuidString] + values))
             }
         } catch {
             Logger.shared.error("保存编译失败: \(error.localizedDescription)")
@@ -859,11 +921,12 @@ final class CompilationService: ObservableObject {
     }
 }
 
-// MARK: - String Helper
+// MARK: - String JSON Escaping
 
 private extension String {
-    func prefix(_ maxLength: Int) -> String {
-        guard count > maxLength else { return self }
-        return String(self[self.startIndex..<self.index(self.startIndex, offsetBy: maxLength)])
+    var jsonEscaped: String {
+        replacingOccurrences(of: "\"", with: "\\\"")
+            .replacingOccurrences(of: "\n", with: "\\n")
+            .replacingOccurrences(of: "\\", with: "\\\\")
     }
 }

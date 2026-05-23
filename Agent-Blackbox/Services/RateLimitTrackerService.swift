@@ -118,6 +118,20 @@ final class RateLimitTrackerService: ObservableObject {
             windows.append(makeWindow(.monthlyCost, used: monthAgg.totalCost, limit: mCost,
                                       unit: "USD", resetsAt: monthEnd, windowMin: monthMins))
         }
+        // 5 小时请求窗口（Kimi 等消费套餐的滑动窗口）
+        if let req5h = limit.fiveHourRequestLimit {
+            let fiveHourAgo = now.addingTimeInterval(-5 * 3600)
+            let logs5h = database.fetchLogs(provider: provider, since: fiveHourAgo, until: now)
+            windows.append(makeWindow(.requests5h, used: Double(logs5h.count), limit: Double(req5h),
+                                      unit: "req", resetsAt: now.addingTimeInterval(5 * 3600), windowMin: 5 * 60))
+        }
+        // 月度请求数窗口（GitHub Copilot Pro: 300 premium requests/month）
+        if let mReq = limit.monthlyRequestLimit {
+            let monthEnd = nextMonthStart(now)
+            let monthMins = Int(monthEnd.timeIntervalSince(monthStart) / 60)
+            windows.append(makeWindow(.monthlyRequests, used: Double(monthAgg.requestCount), limit: Double(mReq),
+                                      unit: "req", resetsAt: monthEnd, windowMin: monthMins))
+        }
 
         // 并发：扫描 logs1h，按 [t, t+duration] 区间扫线求最大重叠
         let concurrency = computeConcurrency(logs: logs1h, now: now)
@@ -236,7 +250,9 @@ final class RateLimitTrackerService: ObservableObject {
             tokensPerHourLimit: sum(\.tokensPerHourLimit),
             dailyTokenLimit: sum(\.dailyTokenLimit),
             dailyCostLimit: sum(\.dailyCostLimit),
-            monthlyCostLimit: sum(\.monthlyCostLimit)
+            monthlyCostLimit: sum(\.monthlyCostLimit),
+            monthlyRequestLimit: sum(\.monthlyRequestLimit),
+            fiveHourRequestLimit: sum(\.fiveHourRequestLimit)
         )
     }
 

@@ -39,6 +39,18 @@ struct PiParser: LogParser {
         return false
     }
 
+    /// Extract text from content field (handles String and [[String: Any]] content-blocks)
+    private func extractContent(_ raw: Any?) -> String {
+        if let str = raw as? String {
+            return str
+        }
+        // Handle content-blocks array: [{"type":"text","text":"..."}]
+        if let blocks = raw as? [[String: Any]] {
+            return blocks.compactMap { $0["text"] as? String }.joined(separator: "\n")
+        }
+        return ""
+    }
+
     func parse(url: URL, content: String) -> [ParsedLog] {
         let ext = url.pathExtension.lowercased()
 
@@ -83,8 +95,11 @@ struct PiParser: LogParser {
         }
 
         // 格式3: 单条消息记录: {"role":"user", "content":"...", "timestamp":"..."}
-        if let role = obj["role"] as? String, let msgContent = obj["content"] as? String {
-            return [parseSingleMessage(url: url, obj: obj, role: role, content: msgContent)]
+        if let role = obj["role"] as? String {
+            let msgContent = extractContent(obj["content"])
+            if !msgContent.isEmpty {
+                return [parseSingleMessage(url: url, obj: obj, role: role, content: msgContent)]
+            }
         }
 
         // 格式4: Pi 导出格式: {"conversations": [{"id":"...", "messages":[...]}]}
@@ -117,7 +132,9 @@ struct PiParser: LogParser {
 
         // 否则作为消息数组处理
         return array.compactMap { obj -> ParsedLog? in
-            guard let role = obj["role"] as? String, let msgContent = obj["content"] as? String else { return nil }
+            guard let role = obj["role"] as? String else { return nil }
+            let msgContent = extractContent(obj["content"])
+            guard !msgContent.isEmpty else { return nil }
             return parseSingleMessage(url: url, obj: obj, role: role, content: msgContent)
         }
     }
@@ -139,7 +156,9 @@ struct PiParser: LogParser {
             }
 
             // 单条消息格式
-            if let role = obj["role"] as? String, let msgContent = obj["content"] as? String {
+            if let role = obj["role"] as? String {
+                let msgContent = extractContent(obj["content"])
+                guard !msgContent.isEmpty else { continue }
                 results.append(parseSingleMessage(url: url, obj: obj, role: role, content: msgContent))
                 continue
             }
@@ -209,7 +228,7 @@ struct PiParser: LogParser {
 
         for msg in messages {
             let role = msg["role"] as? String ?? ""
-            let msgContent = msg["content"] as? String ?? msg["text"] as? String ?? ""
+            let msgContent = extractContent(msg["content"])
             let timestamp = parseTimestamp(from: msg)
 
             if role == "user" || role == "human" {
@@ -256,7 +275,7 @@ struct PiParser: LogParser {
         }
 
         let role = message["role"] as? String ?? "assistant"
-        let content = message["content"] as? String
+        let content = extractContent(message["content"])
         let model = obj["model"] as? String ?? "inflection-3-pi"
 
         let usage = obj["usage"] as? [String: Any]
@@ -281,8 +300,8 @@ struct PiParser: LogParser {
             sourceFile: url.path,
             provider: .pi,
             modelName: model,
-            prompt: role == "user" ? content : nil,
-            response: role == "assistant" ? maskAPIKey(content) : nil,
+            prompt: role == "user" && !content.isEmpty ? content : nil,
+            response: role == "assistant" && !content.isEmpty ? maskAPIKey(content) : nil,
             promptTokens: promptTokens,
             completionTokens: completionTokens,
             totalTokens: totalTokens > 0 ? totalTokens : nil,
@@ -304,8 +323,8 @@ struct PiParser: LogParser {
             modelName: model,
             prompt: (role == "user" || role == "human") ? maskAPIKey(content) : nil,
             response: (role == "assistant" || role == "ai") ? maskAPIKey(content) : nil,
-            promptTokens: obj["prompt_tokens"] as? Int ?? estimateTokenCount(content),
-            completionTokens: obj["completion_tokens"] as? Int ?? estimateTokenCount(content),
+            promptTokens: obj["prompt_tokens"] as? Int ?? ((role == "user" || role == "human") ? estimateTokenCount(content) : nil),
+            completionTokens: obj["completion_tokens"] as? Int ?? ((role == "assistant" || role == "ai") ? estimateTokenCount(content) : nil),
             metadata: [
                 "format": "pi_single_message",
                 "client": "pi",

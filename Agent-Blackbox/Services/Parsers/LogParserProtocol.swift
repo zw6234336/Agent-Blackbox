@@ -90,6 +90,7 @@ extension LogParser {
             if sourceFile.contains("copilot") { return .copilot }
             if sourceFile.contains("cursor") && sourceFile.hasSuffix(".vscdb") { return .cursor }
             if sourceFile.contains("antigravity") { return .antigravity }
+            if sourceFile.contains("/.pi/") || sourceFile.contains("/com.inflection.pi/") { return .pi }
             if sourceFile.contains("dev.warp.warp-stable") || sourceFile.contains("/.warp/") { return .warp }
         }
         

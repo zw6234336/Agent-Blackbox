@@ -96,8 +96,10 @@ struct MonitorConfig: Codable, Equatable {
         "*/chatSessions/*.json",          // VSCode Copilot chat sessions
         "*/threads/T-*.json",             // Amp threads (path-scoped, redundant safety)
         "*/dev.warp.Warp-Stable/mcp/*.log", // Warp MCP logs
-        "*pi*.json",                      // Pi conversation exports
-        "*pi*.jsonl"                      // Pi JSONL logs
+        "*/.pi/*.json",                     // Pi conversation exports (path-scoped)
+        "*/.pi/*.jsonl",                    // Pi JSONL logs (path-scoped)
+        "*/com.inflection.pi/*.json",      // Pi desktop app logs (path-scoped)
+        "pi-conversation-*.json"            // Pi explicit export filename
     ]
     var isRecursive: Bool = true
     var refreshInterval: TimeInterval = 1.0
@@ -109,20 +111,30 @@ struct MonitorConfig: Codable, Equatable {
     var exportDirectory: String = NSHomeDirectory() + "/Library/Application Support/Agent-Blackbox/Exports/"
     
     /// Token rates per 1K tokens (input, output) in USD
+    /// 来源：各厂商官方定价页（2025-06）
     var tokenRates: [String: TokenRate] = [
+        // OpenAI — platform.openai.com/docs/models
         "gpt-4": TokenRate(inputPer1K: 0.03, outputPer1K: 0.06),
         "gpt-4-turbo": TokenRate(inputPer1K: 0.01, outputPer1K: 0.03),
-        "gpt-4o": TokenRate(inputPer1K: 0.005, outputPer1K: 0.015),
+        "gpt-4o": TokenRate(inputPer1K: 0.0025, outputPer1K: 0.01),        // $2.50/$10 per 1M（2024-11 新价格）
         "gpt-4o-mini": TokenRate(inputPer1K: 0.00015, outputPer1K: 0.0006),
+        "gpt-4o-2024-11-20": TokenRate(inputPer1K: 0.0025, outputPer1K: 0.01),
         "gpt-3.5-turbo": TokenRate(inputPer1K: 0.0005, outputPer1K: 0.0015),
+        // Anthropic — anthropic.com/pricing
         "claude-3-opus": TokenRate(inputPer1K: 0.015, outputPer1K: 0.075),
         "claude-3.5-sonnet": TokenRate(inputPer1K: 0.003, outputPer1K: 0.015),
+        "claude-3.5-haiku": TokenRate(inputPer1K: 0.0008, outputPer1K: 0.004),
         "claude-3-haiku": TokenRate(inputPer1K: 0.00025, outputPer1K: 0.00125),
         "claude-sonnet-4": TokenRate(inputPer1K: 0.003, outputPer1K: 0.015),
+        "claude-sonnet-4-5": TokenRate(inputPer1K: 0.003, outputPer1K: 0.015),
+        "claude-haiku-4": TokenRate(inputPer1K: 0.0008, outputPer1K: 0.004),
         "claude-opus-4": TokenRate(inputPer1K: 0.015, outputPer1K: 0.075),
+        // Google Gemini — ai.google.dev/gemini-api/docs/pricing
         "gemini-pro": TokenRate(inputPer1K: 0.0005, outputPer1K: 0.0015),
         "gemini-1.5-pro": TokenRate(inputPer1K: 0.00125, outputPer1K: 0.005),
         "gemini-1.5-flash": TokenRate(inputPer1K: 0.000075, outputPer1K: 0.0003),
+        "gemini-2.0-flash": TokenRate(inputPer1K: 0.0001, outputPer1K: 0.0004),
+        "gemini-2.5-pro": TokenRate(inputPer1K: 0.00125, outputPer1K: 0.01),
     ]
 
     /// 每个 provider 的限额配置（RPM / TPM / 日预算 / 月预算）

@@ -46,23 +46,27 @@ struct RateWindow: Identifiable, Hashable, Codable {
     enum Severity { case normal, warning, critical }
 
     enum WindowKind: String, Codable, CaseIterable {
-        case rpm1m       // 每分钟请求数
-        case tpm1m       // 每分钟 token 数
-        case requests1h  // 1 小时请求
-        case tokens1h    // 1 小时 token
-        case dailyTokens // 今日 token
-        case dailyCost   // 今日费用
-        case monthlyCost // 月度费用
+        case rpm1m          // 每分钟请求数
+        case tpm1m          // 每分钟 token 数
+        case requests1h     // 1 小时请求
+        case tokens1h       // 1 小时 token
+        case requests5h     // 5 小时请求（Kimi 等消费套餐）
+        case dailyTokens    // 今日 token
+        case dailyCost      // 今日费用
+        case monthlyCost    // 月度费用
+        case monthlyRequests // 月度请求数（Copilot Pro 等）
 
         var displayName: String {
             switch self {
-            case .rpm1m:       return "RPM (每分钟请求)"
-            case .tpm1m:       return "TPM (每分钟 Token)"
-            case .requests1h:  return "1 小时请求"
-            case .tokens1h:    return "1 小时 Token"
-            case .dailyTokens: return "今日 Token"
-            case .dailyCost:   return "今日费用"
-            case .monthlyCost: return "月度费用"
+            case .rpm1m:           return "RPM (每分钟请求)"
+            case .tpm1m:           return "TPM (每分钟 Token)"
+            case .requests1h:      return "1 小时请求"
+            case .tokens1h:        return "1 小时 Token"
+            case .requests5h:      return "5 小时请求"
+            case .dailyTokens:     return "今日 Token"
+            case .dailyCost:       return "今日费用"
+            case .monthlyCost:     return "月度费用"
+            case .monthlyRequests: return "月度请求数"
             }
         }
     }
@@ -178,7 +182,7 @@ struct ProviderUsageSnapshot: Identifiable, Hashable {
 struct ProviderRateLimit: Codable, Hashable {
     /// 每分钟请求数上限
     var rpmLimit: Int?
-    /// 每分钟 token 上限
+    /// 每分钟 token 上限（对应 Anthropic ITPM / OpenAI TPM）
     var tpmLimit: Int?
     /// 1 小时请求上限
     var requestsPerHourLimit: Int?
@@ -190,56 +194,216 @@ struct ProviderRateLimit: Codable, Hashable {
     var dailyCostLimit: Double?
     /// 月度预算 (USD)
     var monthlyCostLimit: Double?
+    /// 月度请求数上限（适用于 Copilot Pro 等按月请求计费的套餐）
+    var monthlyRequestLimit: Int?
+    /// 5 小时请求数上限（适用于 Kimi 等消费套餐的滑动窗口）
+    var fiveHourRequestLimit: Int?
 
+    // MARK: - 官方套餐默认值（基于各厂商公开文档）
+
+    /// OpenAI API Tier 1（$5 充值后）
+    /// 来源：platform.openai.com/docs/guides/rate-limits
+    /// GPT-4o: RPM 500, TPM 30,000
     static let defaultOpenAITier1 = ProviderRateLimit(
-        rpmLimit: 500, tpmLimit: 30_000,
-        requestsPerHourLimit: 10_000, tokensPerHourLimit: 1_000_000,
-        dailyTokenLimit: 5_000_000, dailyCostLimit: 50, monthlyCostLimit: 500
+        rpmLimit: 500,
+        tpmLimit: 30_000,
+        requestsPerHourLimit: nil,
+        tokensPerHourLimit: nil,
+        dailyTokenLimit: nil,
+        dailyCostLimit: nil,
+        monthlyCostLimit: nil
     )
 
+    /// Anthropic Claude API Tier 1
+    /// 来源：platform.claude.com/docs/en/api/rate-limits
+    /// Claude Sonnet 4.x: RPM 50, ITPM 30,000; 月度上限 $500
     static let defaultAnthropicTier1 = ProviderRateLimit(
-        rpmLimit: 50, tpmLimit: 40_000,
-        requestsPerHourLimit: 1_000, tokensPerHourLimit: 1_200_000,
-        dailyTokenLimit: 10_000_000, dailyCostLimit: 50, monthlyCostLimit: 500
+        rpmLimit: 50,
+        tpmLimit: 30_000,
+        requestsPerHourLimit: nil,
+        tokensPerHourLimit: nil,
+        dailyTokenLimit: nil,
+        dailyCostLimit: nil,
+        monthlyCostLimit: 500
     )
 
+    /// GitHub Copilot Pro（$10/用户/月）
+    /// 来源：github.com/features/copilot
+    /// Pro: 300 premium requests/month；无 RPM/TPM 限制
+    static let defaultCopilotPro = ProviderRateLimit(
+        rpmLimit: nil,
+        tpmLimit: nil,
+        requestsPerHourLimit: nil,
+        tokensPerHourLimit: nil,
+        dailyTokenLimit: nil,
+        dailyCostLimit: nil,
+        monthlyCostLimit: nil,
+        monthlyRequestLimit: 300
+    )
+
+    /// Cursor Pro（$20/月）
+    /// 来源：cursor.com/docs/models-and-pricing
+    /// Pro plan: $20 monthly API pool；无 RPM/TPM 概念
+    static let defaultCursorPro = ProviderRateLimit(
+        rpmLimit: nil,
+        tpmLimit: nil,
+        requestsPerHourLimit: nil,
+        tokensPerHourLimit: nil,
+        dailyTokenLimit: nil,
+        dailyCostLimit: nil,
+        monthlyCostLimit: 20.0
+    )
+
+    /// Claude Desktop / Claude Code 消费套餐
+    /// 来源：claude.ai/upgrade
+    /// Claude Pro $20/月：5 小时滑动窗口 + 每周配额；无 API RPM/TPM
+    static let defaultClaudeConsumer = ProviderRateLimit(
+        rpmLimit: nil,
+        tpmLimit: nil,
+        requestsPerHourLimit: nil,
+        tokensPerHourLimit: nil,
+        dailyTokenLimit: nil,
+        dailyCostLimit: nil,
+        monthlyCostLimit: 20.0
+    )
+
+    /// 本地模型（Ollama / LM Studio）：理论无限制，仅监控吞吐
     static let defaultLocal = ProviderRateLimit(
-        rpmLimit: 60, tpmLimit: nil,
-        requestsPerHourLimit: nil, tokensPerHourLimit: nil,
-        dailyTokenLimit: nil, dailyCostLimit: nil, monthlyCostLimit: nil
+        rpmLimit: nil,
+        tpmLimit: nil,
+        requestsPerHourLimit: nil,
+        tokensPerHourLimit: nil,
+        dailyTokenLimit: nil,
+        dailyCostLimit: nil,
+        monthlyCostLimit: nil
     )
 
+    /// Warp AI（API token 套餐，月度 Credits）
+    /// 来源：warp.dev — GraphQL request limits + monthly credits
     static let defaultWarp = ProviderRateLimit(
-        rpmLimit: 120, tpmLimit: 80_000,
-        requestsPerHourLimit: 3_000, tokensPerHourLimit: 2_000_000,
-        dailyTokenLimit: nil, dailyCostLimit: 15, monthlyCostLimit: 150
+        rpmLimit: nil,
+        tpmLimit: nil,
+        requestsPerHourLimit: nil,
+        tokensPerHourLimit: nil,
+        dailyTokenLimit: nil,
+        dailyCostLimit: nil,
+        monthlyCostLimit: 15.0
     )
 
-    /// 默认配置表（按 provider）
+    /// 默认配置表（按 provider，基于各厂商公开套餐政策）
     static func defaults() -> [String: ProviderRateLimit] {
         var dict: [String: ProviderRateLimit] = [:]
         for p in LLMProvider.allCases {
             switch p {
-            case .openai, .copilot:
+
+            // ── OpenAI 直接 API ──────────────────────────────────────────
+            // Tier 1: GPT-4o RPM 500, TPM 30,000
+            case .openai:
                 dict[p.rawValue] = .defaultOpenAITier1
-            case .anthropic, .claudeDesktop, .cline:
+
+            // ── GitHub Copilot Pro ──────────────────────────────────────
+            // 月度 300 premium requests；无 RPM/TPM
+            case .copilot:
+                dict[p.rawValue] = .defaultCopilotPro
+
+            // ── Anthropic Claude API（Cline 直连 API）──────────────────
+            // Tier 1: RPM 50, ITPM 30,000 (Sonnet 4.x)，月上限 $500
+            case .anthropic, .cline:
                 dict[p.rawValue] = .defaultAnthropicTier1
-            case .deepseek, .qwen, .kimi, .zhipu, .google:
+
+            // ── Claude Desktop / Claude Code 消费套餐 ──────────────────
+            // Claude Pro $20/月，5 小时滑动窗口，无 API 级别 RPM
+            case .claudeDesktop:
+                dict[p.rawValue] = .defaultClaudeConsumer
+
+            // ── Cursor ─────────────────────────────────────────────────
+            // Pro $20/月 API pool，纯费用制，无请求计数配额
+            case .cursor:
+                dict[p.rawValue] = .defaultCursorPro
+
+            // ── DeepSeek API ───────────────────────────────────────────
+            // 来源：platform.deepseek.com — deepseek-chat 免费额度
+            // 60 RPM，无公开 TPM 上限（按 tokens 计费）
+            case .deepseek:
                 dict[p.rawValue] = ProviderRateLimit(
-                    rpmLimit: 60, tpmLimit: 60_000,
-                    requestsPerHourLimit: 1_000, tokensPerHourLimit: 1_000_000,
-                    dailyTokenLimit: nil, dailyCostLimit: 10, monthlyCostLimit: 100
+                    rpmLimit: 60,
+                    tpmLimit: nil,
+                    requestsPerHourLimit: nil,
+                    tokensPerHourLimit: nil,
+                    dailyTokenLimit: nil,
+                    dailyCostLimit: nil,
+                    monthlyCostLimit: nil
                 )
+
+            // ── 通义千问 Qwen API ──────────────────────────────────────
+            // 来源：dashscope.aliyun.com — qwen-plus 免费额度
+            // 120 RPM，180,000 TPM
+            case .qwen:
+                dict[p.rawValue] = ProviderRateLimit(
+                    rpmLimit: 120,
+                    tpmLimit: 180_000,
+                    requestsPerHourLimit: nil,
+                    tokensPerHourLimit: nil,
+                    dailyTokenLimit: nil,
+                    dailyCostLimit: nil,
+                    monthlyCostLimit: nil
+                )
+
+            // ── Kimi（月之暗面消费套餐）────────────────────────────────
+            // 来源：kimi.ai — 5 小时滑动窗口
+            // 消费版：约每 5 小时 50 次（不同套餐有差异）
+            case .kimi:
+                dict[p.rawValue] = ProviderRateLimit(
+                    rpmLimit: nil,
+                    tpmLimit: nil,
+                    requestsPerHourLimit: nil,
+                    tokensPerHourLimit: nil,
+                    dailyTokenLimit: nil,
+                    dailyCostLimit: nil,
+                    monthlyCostLimit: nil,
+                    monthlyRequestLimit: nil,
+                    fiveHourRequestLimit: 50
+                )
+
+            // ── 智谱清言 GLM API ───────────────────────────────────────
+            // 来源：open.bigmodel.cn — GLM 系列 API
+            // 200 RPM，200,000 TPM（标准套餐参考值）
+            case .zhipu:
+                dict[p.rawValue] = ProviderRateLimit(
+                    rpmLimit: 200,
+                    tpmLimit: 200_000,
+                    requestsPerHourLimit: nil,
+                    tokensPerHourLimit: nil,
+                    dailyTokenLimit: nil,
+                    dailyCostLimit: nil,
+                    monthlyCostLimit: nil
+                )
+
+            // ── Google Gemini API ──────────────────────────────────────
+            // 来源：ai.google.dev/gemini-api/docs/rate-limits
+            // Gemini 2.0 Flash 免费：15 RPM，1,000,000 TPM
+            case .google:
+                dict[p.rawValue] = ProviderRateLimit(
+                    rpmLimit: 15,
+                    tpmLimit: 1_000_000,
+                    requestsPerHourLimit: nil,
+                    tokensPerHourLimit: nil,
+                    dailyTokenLimit: nil,
+                    dailyCostLimit: nil,
+                    monthlyCostLimit: nil
+                )
+
+            // ── Warp ───────────────────────────────────────────────────
             case .warp:
                 dict[p.rawValue] = .defaultWarp
+
+            // ── 本地模型（无外部限额）─────────────────────────────────
             case .ollama, .lmstudio:
                 dict[p.rawValue] = .defaultLocal
+
+            // ── 其余 provider（无已知配额，仅监控用量）────────────────
             default:
-                dict[p.rawValue] = ProviderRateLimit(
-                    rpmLimit: 60, tpmLimit: nil,
-                    requestsPerHourLimit: nil, tokensPerHourLimit: nil,
-                    dailyTokenLimit: nil, dailyCostLimit: nil, monthlyCostLimit: nil
-                )
+                dict[p.rawValue] = ProviderRateLimit()
             }
         }
         return dict
