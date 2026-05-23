@@ -333,7 +333,7 @@ enum CoverageCategory: String, CaseIterable, Identifiable {
 struct FamilyMemberProfile: Identifiable {
     private enum ScoreModel {
         static let emptyPolicyBaseline = 42.0
-        static let insuredBaseline = 62.0
+        static let baselineScoreWithPolicies = 62.0
         static let ratioWeight = 28.0
         static let maxScore = 96
     }
@@ -349,7 +349,7 @@ struct FamilyMemberProfile: Identifiable {
 
     var protectionScore: Int {
         let totalGapRatio = gaps.map(\.coverageRatio).reduce(0, +)
-        let baseline = policies.isEmpty ? ScoreModel.emptyPolicyBaseline : ScoreModel.insuredBaseline
+        let baseline = policies.isEmpty ? ScoreModel.emptyPolicyBaseline : ScoreModel.baselineScoreWithPolicies
         let averageRatio = gaps.isEmpty ? 1.0 : totalGapRatio / Double(gaps.count)
         let weightedScore = baseline + averageRatio * ScoreModel.ratioWeight
         return min(ScoreModel.maxScore, Int(weightedScore.rounded()))
