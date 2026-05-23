@@ -21,6 +21,9 @@ struct WarpParser: LogParser {
         if path.contains("/dev.warp.warp-stable/") && name == "warp_network.log" {
             return true
         }
+        if path.contains("/library/logs/") && (name == "warp.log" || name.hasPrefix("warp.log.old")) {
+            return true
+        }
         if path.contains("/dev.warp.warp-stable/mcp/") && name.hasSuffix(".log") {
             return true
         }
@@ -29,10 +32,97 @@ struct WarpParser: LogParser {
 
     func parse(url: URL, content: String) -> [ParsedLog] {
         let path = url.path.lowercased()
+        if path.contains("/library/logs/") {
+            return parseAppLog(url: url, content: content)
+        }
         if path.contains("/dev.warp.warp-stable/mcp/") {
             return parseMCPLog(url: url, content: content)
         }
         return parseNetworkLog(url: url, content: content)
+    }
+
+    private func parseAppLog(url: URL, content: String) -> [ParsedLog] {
+        let lines = content.components(separatedBy: .newlines)
+        var results: [ParsedLog] = []
+
+        for line in lines {
+            guard let timestamp = parseAppLogTimestamp(line) else { continue }
+
+            if let model = firstMatch(in: line, pattern: #"Selecting base agent model\s+([\w\-.]+)"#) {
+                results.append(
+                    ParsedLog(
+                        timestamp: timestamp,
+                        sourceFile: url.path,
+                        provider: .warp,
+                        modelName: model,
+                        metadata: [
+                            "format": "warp_app_log",
+                            "client": "warp",
+                            "category": "model_selection",
+                            "label": "Warp 模型选择"
+                        ]
+                    )
+                )
+                continue
+            }
+
+            if let conversationId = firstMatch(in: line, pattern: #"Restoring agent view for conversation:\s+([0-9a-f\-]+)"#) {
+                results.append(
+                    ParsedLog(
+                        timestamp: timestamp,
+                        sourceFile: url.path,
+                        provider: .warp,
+                        conversationId: conversationId,
+                        metadata: [
+                            "format": "warp_app_log",
+                            "client": "warp",
+                            "category": "conversation_restore",
+                            "label": "Warp 会话恢复"
+                        ]
+                    )
+                )
+                continue
+            }
+
+            if let conversationId = firstMatch(in: line, pattern: #"Failed to record conversation with ID\s+([0-9a-f\-]+)"#) {
+                results.append(
+                    ParsedLog(
+                        timestamp: timestamp,
+                        sourceFile: url.path,
+                        provider: .warp,
+                        errorMessage: String((maskAPIKey(line) ?? line).prefix(400)),
+                        conversationId: conversationId,
+                        metadata: [
+                            "format": "warp_app_log",
+                            "client": "warp",
+                            "category": "conversation_error",
+                            "label": "Warp 会话记录失败"
+                        ]
+                    )
+                )
+                continue
+            }
+
+            if let restoredConversations = firstMatch(in: line, pattern: #"Restoring\s+(\d+)\s+conversations on view creation"#) {
+                results.append(
+                    ParsedLog(
+                        timestamp: timestamp,
+                        sourceFile: url.path,
+                        provider: .warp,
+                        metadata: [
+                            "format": "warp_app_log",
+                            "client": "warp",
+                            "category": "conversation_restore_batch",
+                            "label": "Warp 批量恢复会话",
+                            "conversation_count": restoredConversations
+                        ]
+                    )
+                )
+                continue
+            }
+        }
+
+        return results
     }
 
     private func parseNetworkLog(url: URL, content: String) -> [ParsedLog] {
@@ -176,6 +266,14 @@ struct WarpParser: LogParser {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
+        return formatter.date(from: match[0])
+    }
+
+    private func parseAppLogTimestamp(_ line: String) -> Date? {
+        let pattern = #"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)"#
+        guard let match = regexMatch(in: line, pattern: pattern) else { return nil }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
         return formatter.date(from: match[0])
     }
 

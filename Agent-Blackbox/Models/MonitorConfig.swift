@@ -37,8 +37,12 @@ struct MonitorConfig: Codable, Equatable {
             // Gemini (GCloud CLI logs)
             home + "/.config/gcloud/logs/",
 
+            // Antigravity (Google)
+            home + "/.gemini/antigravity/brain/",
+
             // Warp
             home + "/Library/Application Support/dev.warp.Warp-Stable/",
+            home + "/Library/Logs/warp.log",
             home + "/.warp/",
             
             // Cline (VS Code & Cursor)

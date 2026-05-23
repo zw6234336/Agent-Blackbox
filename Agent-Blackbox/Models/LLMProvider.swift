@@ -112,6 +112,7 @@ enum LLMProvider: String, Codable, CaseIterable, Identifiable {
         case .warp:
             return [
                 home + "/Library/Application Support/dev.warp.Warp-Stable/",
+                home + "/Library/Logs/warp.log",
                 home + "/.warp/"
             ]
         case .cursor:
@@ -163,6 +164,7 @@ enum LLMProvider: String, Codable, CaseIterable, Identifiable {
             ]
         case .antigravity:
             return [
+                home + "/.gemini/antigravity/brain/",
                 home + "/Library/Logs/Antigravity/",
                 home + "/Library/Application Support/Antigravity/logs/",
                 home + "/Library/Application Support/Antigravity IDE/logs/"
