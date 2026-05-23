@@ -4,6 +4,8 @@ import SQLite
 @MainActor
 final class DatabaseService: ObservableObject {
     @Published var logs: [ParsedLog] = []
+    @Published private(set) var totalLogCount: Int = 0
+    @Published private(set) var errorLogCount: Int = 0
 
     private var db: Connection?
 
@@ -66,7 +68,7 @@ final class DatabaseService: ObservableObject {
     }
 
     func reloadLogs(limit: Int = 100, offset: Int = 0) async {
-        logs = fetchLogs(limit: limit, offset: offset)
+        applySnapshot(fetchLogs(limit: limit, offset: offset))
     }
 
     func fetchLogs(limit: Int = 100, offset: Int = 0) -> [ParsedLog] {
@@ -165,6 +167,12 @@ final class DatabaseService: ObservableObject {
             errorMessage: row[errorMessage],
             metadata: metadata
         )
+    }
+
+    private func applySnapshot(_ newLogs: [ParsedLog]) {
+        logs = newLogs
+        totalLogCount = newLogs.count
+        errorLogCount = newLogs.lazy.filter { $0.errorMessage != nil }.count
     }
 
     static var defaultDatabaseURL: URL {

@@ -4,17 +4,13 @@ struct LogListView: View {
     @EnvironmentObject var database: DatabaseService
     @State private var searchText = ""
     @State private var selectedLog: ParsedLog?
+    @State private var searchResults: [ParsedLog] = []
 
     private var filteredLogs: [ParsedLog] {
         if searchText.isEmpty {
             return database.logs
         }
-
-        return database.logs.filter { log in
-            log.prompt?.localizedCaseInsensitiveContains(searchText) ?? false ||
-            log.response?.localizedCaseInsensitiveContains(searchText) ?? false ||
-            log.modelName?.localizedCaseInsensitiveContains(searchText) ?? false
-        }
+        return searchResults
     }
 
     var body: some View {
@@ -38,6 +34,21 @@ struct LogListView: View {
         }
         .task {
             await database.reloadLogs()
+            refreshSearchResults()
         }
+        .onChange(of: searchText) { _ in
+            refreshSearchResults()
+        }
+        .onChange(of: database.logs) { _ in
+            refreshSearchResults()
+        }
+    }
+
+    private func refreshSearchResults() {
+        guard !searchText.isEmpty else {
+            searchResults = []
+            return
+        }
+        searchResults = database.searchLogs(query: searchText)
     }
 }
