@@ -232,45 +232,41 @@ struct DashboardView: View {
 
     private var modelBarChart: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("模型调用排行")
-                .font(.headline)
+            HStack {
+                Text("模型调用排行")
+                    .font(.headline)
+                Spacer()
+                Text("全部模型")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
 
             if stats.callsByModel.isEmpty {
                 emptyChartPlaceholder("暂无数据")
             } else {
                 let modelData = stats.callsByModel.map { ModelChartData(name: $0.key, count: $0.value) }
                     .sorted { $0.count > $1.count }
-                    .prefix(10)
+                let maxCount = modelData.first?.count ?? 1
+                let totalCalls = modelData.reduce(0) { $0 + $1.count }
 
-                Chart(Array(modelData)) { item in
-                    BarMark(
-                        x: .value("调用次数", item.count),
-                        y: .value("模型", item.name)
-                    )
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [.accentGradientStart, .accentGradientEnd],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    )
-                    .cornerRadius(4)
-                    .annotation(position: .trailing) {
-                        Text("\(item.count)")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .chartYAxis {
-                    AxisMarks { value in
-                        AxisValueLabel {
-                            if let name = value.as(String.self) {
-                                Text(name)
-                                    .font(.caption)
-                                    .lineLimit(1)
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("按调用次数降序展示，并保留小调用量模型，避免被头部模型压缩到不可见。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    ScrollView {
+                        LazyVStack(spacing: 10) {
+                            ForEach(Array(modelData.enumerated()), id: \.element.id) { index, item in
+                                ModelRankingRow(
+                                    rank: index + 1,
+                                    item: item,
+                                    maxCount: maxCount,
+                                    totalCalls: totalCalls
+                                )
                             }
                         }
                     }
+                    .frame(maxHeight: 320)
                 }
             }
         }
@@ -448,4 +444,70 @@ struct ModelChartData: Identifiable {
     let id = UUID()
     let name: String
     let count: Int
+}
+
+struct ModelRankingRow: View {
+    let rank: Int
+    let item: ModelChartData
+    let maxCount: Int
+    let totalCalls: Int
+
+    private var fillRatio: Double {
+        guard maxCount > 0 else { return 0 }
+        return max(Double(item.count) / Double(maxCount), 0.04)
+    }
+
+    private var shareText: String {
+        guard totalCalls > 0 else { return "0%" }
+        return (Double(item.count) / Double(totalCalls)).formatted(.percent.precision(.fractionLength(1)))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("#\(rank)")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .frame(width: 28, alignment: .leading)
+
+                Text(item.name)
+                    .font(.subheadline)
+                    .lineLimit(1)
+
+                Spacer(minLength: 8)
+
+                Text("\(item.count)")
+                    .font(.subheadline.monospacedDigit())
+                    .fontWeight(.semibold)
+
+                Text(shareText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 44, alignment: .trailing)
+            }
+
+            GeometryReader { proxy in
+                let width = max(proxy.size.width * fillRatio, 8)
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color.primary.opacity(0.07))
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(
+                            LinearGradient(
+                                colors: [.accentGradientStart, .accentGradientEnd],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .frame(width: width)
+                }
+            }
+            .frame(height: 10)
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.primary.opacity(0.03))
+        )
+    }
 }

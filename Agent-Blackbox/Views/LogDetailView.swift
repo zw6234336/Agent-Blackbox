@@ -73,6 +73,7 @@ struct LogDetailView: View {
             }
             .padding()
         }
+        .textSelection(.enabled)
         .onAppear {
             notesText = log.notes ?? ""
         }
@@ -213,8 +214,8 @@ struct LogDetailView: View {
                 }
                 
                 Text(content)
-                    .textSelection(.enabled)
                     .font(.system(.body, design: .monospaced))
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(8)
                     .background(Color.primary.opacity(0.03))
                     .clipShape(RoundedRectangle(cornerRadius: 6))

@@ -43,6 +43,7 @@ struct LogListView: View {
                 }
                 .searchable(text: $searchText, prompt: "搜索日志...")
             }
+            .navigationSplitViewColumnWidth(min: 320, ideal: 380, max: 560)
         } detail: {
             if let log = selectedLog {
                 LogDetailView(log: log)
@@ -56,6 +57,7 @@ struct LogListView: View {
                 }
             }
         }
+        .navigationSplitViewStyle(.balanced)
         .task {
             await database.reloadLogs()
             refreshFilteredLogs()
