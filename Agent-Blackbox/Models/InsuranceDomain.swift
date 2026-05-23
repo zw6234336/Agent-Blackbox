@@ -442,7 +442,7 @@ struct KnowledgeCard: Identifiable {
 
 /// Formats amounts for the current Chinese-language prototype UI.
 /// Values above 10,000 use the Chinese "万" unit because the product copy and sample data are localized for that market.
-func formatInsuranceAmount(_ amount: Int) -> String {
+func formatInsuranceAmountCN(_ amount: Int) -> String {
     if amount >= 10_000 {
         let wan = Double(amount) / 10_000
         if wan.rounded() == wan {

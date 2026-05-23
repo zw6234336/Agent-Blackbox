@@ -55,7 +55,7 @@ struct InsuranceDashboardView: View {
             SummaryMetricCard(title: "家庭保障分", value: "\(workspace.protectionScore)", detail: "覆盖完整度" , tint: InsurancePalette.primary)
             SummaryMetricCard(title: "已整理保单", value: "\(workspace.totalPolicies)", detail: "含费率与条款摘要", tint: InsurancePalette.accent)
             SummaryMetricCard(title: "待补资料", value: "\(workspace.pendingMaterialCount)", detail: "还影响最终推荐", tint: InsurancePalette.warning)
-            SummaryMetricCard(title: "当前年保费", value: formatInsuranceAmount(workspace.totalAnnualPremium), detail: "家庭已配置预算", tint: InsurancePalette.primary)
+            SummaryMetricCard(title: "当前年保费", value: formatInsuranceAmountCN(workspace.totalAnnualPremium), detail: "家庭已配置预算", tint: InsurancePalette.primary)
         }
     }
 
@@ -185,7 +185,7 @@ struct MyCoverageView: View {
                     VStack(alignment: .trailing, spacing: 6) {
                         Text("保障分 \(selectedMember.protectionScore)")
                             .font(.headline)
-                        Text(selectedMember.annualIncome == 0 ? "当前无收入" : "年收入 \(formatInsuranceAmount(selectedMember.annualIncome))")
+                        Text(selectedMember.annualIncome == 0 ? "当前无收入" : "年收入 \(formatInsuranceAmountCN(selectedMember.annualIncome))")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -213,13 +213,13 @@ struct MyCoverageView: View {
                                     .foregroundColor(.secondary)
                             }
                             Spacer()
-                            Text(formatInsuranceAmount(policy.insuredAmount))
+                            Text(formatInsuranceAmountCN(policy.insuredAmount))
                                 .font(.headline)
                                 .foregroundColor(InsurancePalette.primary)
                         }
                         SimpleInfoLine(label: "保障期间", value: policy.coveragePeriod)
                         SimpleInfoLine(label: "生效规则", value: policy.effectiveRule)
-                        SimpleInfoLine(label: "预计年保费", value: formatInsuranceAmount(policy.annualPremium))
+                        SimpleInfoLine(label: "预计年保费", value: formatInsuranceAmountCN(policy.annualPremium))
                         SimpleInfoLine(label: "来源说明", value: policy.sourceSummary)
                     }
                 }
@@ -269,15 +269,15 @@ struct GapAnalysisView: View {
                                         .foregroundColor(.secondary)
                                 }
                                 Spacer()
-                                StatusPill(title: "缺口 \(formatInsuranceAmount(gap.gapAmount))", tint: InsurancePalette.warning)
+                                StatusPill(title: "缺口 \(formatInsuranceAmountCN(gap.gapAmount))", tint: InsurancePalette.warning)
                             }
                             CoverageProgressBar(progress: gap.coverageRatio)
                             HStack {
-                                Text("已覆盖 \(formatInsuranceAmount(gap.currentAmount))")
+                                Text("已覆盖 \(formatInsuranceAmountCN(gap.currentAmount))")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                                 Spacer()
-                                Text("建议目标 \(formatInsuranceAmount(gap.targetAmount))")
+                                Text("建议目标 \(formatInsuranceAmountCN(gap.targetAmount))")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                             }
@@ -329,8 +329,8 @@ struct RecommendationsView: View {
                 Text(selectedRecommendation.summary)
                     .font(.subheadline)
                 HStack(spacing: 12) {
-                    StatusPill(title: "缺口 \(formatInsuranceAmount(selectedRecommendation.gapAmount))", tint: InsurancePalette.warning)
-                    StatusPill(title: "预计增量保费 \(formatInsuranceAmount(selectedRecommendation.estimatedAnnualPremium))", tint: InsurancePalette.primary)
+                    StatusPill(title: "缺口 \(formatInsuranceAmountCN(selectedRecommendation.gapAmount))", tint: InsurancePalette.warning)
+                    StatusPill(title: "预计增量保费 \(formatInsuranceAmountCN(selectedRecommendation.estimatedAnnualPremium))", tint: InsurancePalette.primary)
                 }
                 SimpleInfoLine(label: "为什么现在优先", value: selectedRecommendation.whyNow)
                 SimpleInfoLine(label: "推荐动作", value: selectedRecommendation.focusAction)
@@ -371,7 +371,7 @@ struct RecommendationsView: View {
                         VStack(alignment: .leading, spacing: 8) {
                             Text(plan.tier)
                                 .font(.headline)
-                            Text(formatInsuranceAmount(plan.annualPremium))
+                            Text(formatInsuranceAmountCN(plan.annualPremium))
                                 .font(.title3)
                                 .fontWeight(.semibold)
                                 .foregroundColor(InsurancePalette.primary)
@@ -457,7 +457,7 @@ private struct DashboardSummaryCard: View {
                     .foregroundColor(.secondary)
                 HStack(spacing: 16) {
                     HeroStat(title: "家庭保障分", value: "\(workspace.protectionScore)")
-                    HeroStat(title: "年度预算参考", value: formatInsuranceAmount(workspace.annualBudget))
+                    HeroStat(title: "年度预算参考", value: formatInsuranceAmountCN(workspace.annualBudget))
                     HeroStat(title: "规划完成度", value: "\(workspace.completedReadinessCount)/\(workspace.readinessSteps.count)")
                 }
             }
@@ -525,10 +525,10 @@ private struct GapInsightRow: View {
                 }
                 Spacer()
                 VStack(alignment: .trailing, spacing: 6) {
-                    Text(formatInsuranceAmount(gap.gapAmount))
+                    Text(formatInsuranceAmountCN(gap.gapAmount))
                         .font(.headline)
                         .foregroundColor(InsurancePalette.warning)
-                    Text("建议目标 \(formatInsuranceAmount(gap.targetAmount))")
+                    Text("建议目标 \(formatInsuranceAmountCN(gap.targetAmount))")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -546,7 +546,7 @@ private struct CoverageProgressRow: View {
                 Text(gap.category.rawValue)
                     .font(.headline)
                 Spacer()
-                Text("缺口 \(formatInsuranceAmount(gap.gapAmount))")
+                Text("缺口 \(formatInsuranceAmountCN(gap.gapAmount))")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
