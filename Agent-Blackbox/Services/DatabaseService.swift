@@ -69,6 +69,7 @@ final class DatabaseService: ObservableObject {
 
     func reloadLogs(limit: Int = 100, offset: Int = 0) async {
         applySnapshot(fetchLogs(limit: limit, offset: offset))
+        updateCountersFromDatabase()
     }
 
     func fetchLogs(limit: Int = 100, offset: Int = 0) -> [ParsedLog] {
@@ -171,8 +172,26 @@ final class DatabaseService: ObservableObject {
 
     private func applySnapshot(_ newLogs: [ParsedLog]) {
         logs = newLogs
-        totalLogCount = newLogs.count
-        errorLogCount = newLogs.lazy.filter { $0.errorMessage != nil }.count
+    }
+
+    private func updateCountersFromDatabase() {
+        guard let db else {
+            totalLogCount = logs.count
+            errorLogCount = logs.lazy.filter { $0.errorMessage != nil }.count
+            return
+        }
+        do {
+            totalLogCount = try db.scalar(logsTable.count)
+            errorLogCount = try db.scalar(
+                logsTable
+                    .filter(errorMessage != nil && (errorMessage ?? "") != "")
+                    .count
+            )
+        } catch {
+            totalLogCount = logs.count
+            errorLogCount = logs.lazy.filter { $0.errorMessage != nil }.count
+            Logger.shared.error("统计计数更新失败: \(error.localizedDescription)")
+        }
     }
 
     static var defaultDatabaseURL: URL {
