@@ -3,7 +3,7 @@ import SwiftUI
 struct LogListView: View {
     @EnvironmentObject var database: DatabaseService
     @State private var searchText = ""
-    @State private var selectedLog: ParsedLog?
+    @State private var selectedLogID: ParsedLog.ID?
     @State private var searchResults: [ParsedLog] = []
     @State private var showFilters = false
     // 过滤结果缓存（异步更新，避免在每次渲染时同步执行 DB 查询）
@@ -24,6 +24,12 @@ struct LogListView: View {
         return filteredLogsCache
     }
 
+    private var selectedLog: ParsedLog? {
+        guard let selectedLogID else { return nil }
+        return database.logs.first { $0.id == selectedLogID }
+            ?? filteredLogs.first { $0.id == selectedLogID }
+    }
+
     var body: some View {
         NavigationSplitView {
             VStack(spacing: 0) {
@@ -36,10 +42,11 @@ struct LogListView: View {
                 }
                 
                 // Log list
-                List(filteredLogs, selection: $selectedLog) { log in
+                List(filteredLogs, selection: $selectedLogID) { log in
                     LogListRow(log: log) {
                         Task { await database.toggleBookmark(logId: log.id) }
                     }
+                    .tag(log.id)
                 }
                 .searchable(text: $searchText, prompt: "搜索日志...")
             }
@@ -88,6 +95,10 @@ struct LogListView: View {
                 if !searchText.isEmpty { refreshSearchResults() }
                 availableModels = database.fetchDistinctModels()
                 availableProviders = database.fetchDistinctProviders()
+            }
+
+            if let selectedLogID, !database.logs.contains(where: { $0.id == selectedLogID }) {
+                self.selectedLogID = nil
             }
         }
         .onChange(of: filterProvider) { refreshFilteredLogs() }
