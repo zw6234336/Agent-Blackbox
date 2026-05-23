@@ -219,7 +219,7 @@ final class DatabaseService: ObservableObject {
         let endTs = endDate.timeIntervalSince1970
         guard endTs > startTs, bucketCount > 0 else { return [] }
         let bucketInterval = (endTs - startTs) / Double(bucketCount)
-        let range = logsTable.filter(timestamp >= startTs && timestamp < endTs)
+        let range = logsTable.filter(timestamp >= startTs && timestamp <= endTs)
         do {
             let rows = try db.prepare(range.select(timestamp, errorMessage))
             var counts = Array(repeating: 0, count: bucketCount)
@@ -302,4 +302,6 @@ struct TrendPoint: Identifiable {
     let date: Date
     let count: Int
     let errorCount: Int
+
+    var normalCount: Int { max(0, count - errorCount) }
 }
