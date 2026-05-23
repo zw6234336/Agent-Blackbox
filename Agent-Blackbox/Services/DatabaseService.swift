@@ -168,7 +168,9 @@ final class DatabaseService: ObservableObject {
     }
 
     static var defaultDatabaseURL: URL {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory())
+                .appendingPathComponent("Library/Application Support", isDirectory: true)
         return appSupport
             .appendingPathComponent("Agent-Blackbox", isDirectory: true)
             .appendingPathComponent("logs.db")
