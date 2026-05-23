@@ -35,12 +35,12 @@ git clone https://github.com/zw6234336/Agent-Blackbox.git
 cd Agent-Blackbox
 ```
 
-2. 使用 Xcode 打开项目：
+2. 使用 Xcode 打开项目（推荐）：
 ```bash
-open Agent-Blackbox.xcodeproj
+open Package.swift
 ```
 
-3. 在 Xcode 中选择目标设备并点击运行按钮
+3. 选择 **AgentBlackbox** scheme，选择 **My Mac** 目标，点击运行
 
 ## 使用说明
 
@@ -60,10 +60,19 @@ open Agent-Blackbox.xcodeproj
 
 ### 支持的 LLM 平台
 
-- OpenAI (GPT-3.5, GPT-4)
-- Anthropic (Claude)
-- 本地运行的模型
-- 自定义日志格式
+| 平台 | 说明 |
+|------|------|
+| **Claude** (Anthropic) | Claude Desktop 应用日志 |
+| **GitHub Copilot** | VS Code / JetBrains 插件日志 |
+| **ChatGPT** (OpenAI) | ChatGPT Desktop 应用日志 |
+| **DeepSeek** | DeepSeek 客户端日志 |
+| **ChatGLM** (智谱 AI) | ChatGLM 本地及 API 日志 |
+| **Pi** (Inflection AI) | Pi 客户端日志 |
+| **Ollama** | 本地 Ollama 服务日志（`~/.ollama/logs/`） |
+| **Gemini** (Google) | Gemini 应用日志 |
+| **Qwen** (通义千问) | 通义千问客户端日志 |
+| **Mistral** | Mistral 客户端日志 |
+| **Custom** | 自定义目录和日志格式 |
 
 ## 数据隐私
 
