@@ -12,6 +12,7 @@ final class FileMonitorService: ObservableObject {
     private let parser = LogParserService()
     private weak var database: DatabaseService?
     private var filePatterns: [String] = ["*.log", "*.txt", "*llm*.json"]
+    private var detectedLogSet: Set<URL> = []
 
     func bind(database: DatabaseService) {
         self.database = database
@@ -80,6 +81,7 @@ final class FileMonitorService: ObservableObject {
         FSEventStreamRelease(eventStream)
         self.eventStream = nil
         isMonitoring = false
+        detectedLogSet.removeAll(keepingCapacity: true)
     }
 
     private func handleFileEvent(path: String, flags: FSEventStreamEventFlags) {
@@ -94,10 +96,14 @@ final class FileMonitorService: ObservableObject {
         let url = URL(fileURLWithPath: path)
         guard matchesPattern(url.lastPathComponent) else { return }
 
-        if !detectedLogs.contains(url) {
+        if detectedLogSet.insert(url).inserted {
             detectedLogs.insert(url, at: 0)
             if detectedLogs.count > 200 {
+                let removed = detectedLogs.suffix(detectedLogs.count - 200)
                 detectedLogs.removeLast(detectedLogs.count - 200)
+                for item in removed {
+                    detectedLogSet.remove(item)
+                }
             }
         }
 

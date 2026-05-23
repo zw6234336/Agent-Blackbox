@@ -30,6 +30,13 @@ struct ContentView: View {
                     Text("选择一个视图")
                 }
             }
+            .onAppear {
+                fileMonitor.bind(database: database)
+                fileMonitor.updateFilePatterns(configService.config.filePatterns)
+            }
+            .onChange(of: configService.config.filePatterns) { newValue in
+                fileMonitor.updateFilePatterns(newValue)
+            }
             .toolbar {
                 ToolbarItem {
                     Button(action: toggleMonitoring) {
@@ -38,13 +45,6 @@ struct ContentView: View {
                             systemImage: fileMonitor.isMonitoring ? "stop.circle" : "play.circle"
                         )
                     }
-                }
-                .onAppear {
-                    fileMonitor.bind(database: database)
-                    fileMonitor.updateFilePatterns(configService.config.filePatterns)
-                }
-                .onChange(of: configService.config.filePatterns) { newValue in
-                    fileMonitor.updateFilePatterns(newValue)
                 }
             }
         }
