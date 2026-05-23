@@ -4,6 +4,7 @@ struct ContentView: View {
     @EnvironmentObject var fileMonitor: FileMonitorService
     @EnvironmentObject var database: DatabaseService
     @EnvironmentObject var configService: ConfigService
+    @EnvironmentObject var compilationService: CompilationService
     @State private var selectedTab = 0
 
     var body: some View {
@@ -19,6 +20,8 @@ struct ContentView: View {
                         .tag(1)
                     Label("收藏", systemImage: "star.fill")
                         .tag(2)
+                    Label("编译", systemImage: "doc.text.append")
+                        .tag(6)
                 }
 
                 Section("用量") {
@@ -51,6 +54,10 @@ struct ContentView: View {
                 case 5:
                     SettingsView()
                         .environmentObject(configService)
+                        .environmentObject(database)
+                case 6:
+                    CompilationView()
+                        .environmentObject(compilationService)
                         .environmentObject(database)
                 default:
                     DashboardView()

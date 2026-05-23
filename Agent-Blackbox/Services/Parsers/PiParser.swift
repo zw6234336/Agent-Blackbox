@@ -181,7 +181,7 @@ struct PiParser: LogParser {
                     provider: .pi,
                     modelName: model,
                     totalTokens: tokens.flatMap(Int.init),
-                    duration: duration.map { parseDurationString($0) },
+                    duration: duration.flatMap { parseDurationString($0) },
                     errorMessage: maskAPIKey(error),
                     metadata: ["format": "pi_text_log", "client": "pi"]
                 ))
@@ -218,7 +218,8 @@ struct PiParser: LogParser {
             } else if role == "assistant" || role == "ai" || role == "bot" {
                 let promptTokens = msg["prompt_tokens"] as? Int ?? msg["inputTokens"] as? Int
                 let completionTokens = msg["completion_tokens"] as? Int ?? msg["outputTokens"] as? Int
-                let totalTokens: Int? = promptTokens ?? completionTokens map { (promptTokens ?? 0) + $0 }
+                let tokenSum = (promptTokens ?? 0) + (completionTokens ?? 0)
+                let totalTokens: Int? = tokenSum > 0 ? tokenSum : nil
                 let cost = estimateCost(model: model, promptTokens: promptTokens, completionTokens: completionTokens)
 
                 results.append(ParsedLog(

@@ -6,6 +6,7 @@ struct AgentBlackboxApp: App {
     @StateObject private var database = DatabaseService()
     @StateObject private var configService = ConfigService()
     @StateObject private var rateTracker = RateLimitTrackerService()
+    @StateObject private var compilationService = CompilationService()
 
     var body: some Scene {
         WindowGroup {
@@ -14,6 +15,7 @@ struct AgentBlackboxApp: App {
                 .environmentObject(database)
                 .environmentObject(configService)
                 .environmentObject(rateTracker)
+                .environmentObject(compilationService)
                 .frame(minWidth: 1000, minHeight: 600)
                 .task {
                     database.initializeIfNeeded()
