@@ -36,6 +36,10 @@ struct MonitorConfig: Codable, Equatable {
             
             // Gemini (GCloud CLI logs)
             home + "/.config/gcloud/logs/",
+
+            // Warp
+            home + "/Library/Application Support/dev.warp.Warp-Stable/",
+            home + "/.warp/",
             
             // Cline (VS Code & Cursor)
             home + "/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/tasks/",
@@ -76,9 +80,11 @@ struct MonitorConfig: Codable, Equatable {
         "*.log", "*.txt", "*llm*.json", "*.jsonl",
         "state.vscdb", "session-store.db", "*.db",
         "api_conversation_history.json",
+        "warp_network.log",
         "T-*.json",                       // Amp threads
         "*/chatSessions/*.json",          // VSCode Copilot chat sessions
-        "*/threads/T-*.json"              // Amp threads (path-scoped, redundant safety)
+        "*/threads/T-*.json",             // Amp threads (path-scoped, redundant safety)
+        "*/dev.warp.Warp-Stable/mcp/*.log" // Warp MCP logs
     ]
     var isRecursive: Bool = true
     var refreshInterval: TimeInterval = 1.0

@@ -90,6 +90,7 @@ extension LogParser {
             if sourceFile.contains("copilot") { return .copilot }
             if sourceFile.contains("cursor") && sourceFile.hasSuffix(".vscdb") { return .cursor }
             if sourceFile.contains("antigravity") { return .antigravity }
+            if sourceFile.contains("dev.warp.warp-stable") || sourceFile.contains("/.warp/") { return .warp }
         }
         
         guard let model = model?.lowercased() else {
@@ -108,6 +109,7 @@ extension LogParser {
         if model.contains("gpt") || model.contains("o1") || model.contains("o3") || model.contains("o4") { return .openai }
         if model.contains("claude") { return .anthropic }
         if model.contains("gemini") || model.contains("palm") { return .google }
+        if model.contains("warp") { return .warp }
         if model.contains("deepseek") { return .deepseek }
         if model.contains("qwen") { return .qwen }
         if model.contains("kimi") || model.contains("moonshot") { return .kimi }

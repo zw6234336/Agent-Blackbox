@@ -2,6 +2,7 @@ import Foundation
 
 final class LogParserService: Sendable {
     private let parsers: [any LogParser] = [
+        WarpParser(),
         CursorLogParser(),
         ClaudeDesktopParser(),
         OllamaLogParser(),

@@ -4,6 +4,7 @@ enum LLMProvider: String, Codable, CaseIterable, Identifiable {
     case openai
     case anthropic
     case google
+    case warp
     case ollama
     case cursor
     case copilot
@@ -26,6 +27,7 @@ enum LLMProvider: String, Codable, CaseIterable, Identifiable {
         case .openai: return "OpenAI"
         case .anthropic: return "Anthropic"
         case .google: return "Google"
+        case .warp: return "Warp"
         case .ollama: return "Ollama"
         case .cursor: return "Cursor"
         case .copilot: return "GitHub Copilot"
@@ -48,6 +50,7 @@ enum LLMProvider: String, Codable, CaseIterable, Identifiable {
         case .openai: return "brain.head.profile"
         case .anthropic: return "sparkle"
         case .google: return "globe"
+        case .warp: return "terminal.fill"
         case .ollama: return "desktopcomputer"
         case .cursor: return "cursorarrow.rays"
         case .copilot: return "airplane"
@@ -70,6 +73,7 @@ enum LLMProvider: String, Codable, CaseIterable, Identifiable {
         case .openai: return Color(hue: 0.47, saturation: 0.85, brightness: 0.65)
         case .anthropic: return Color(hue: 0.08, saturation: 0.75, brightness: 0.85)
         case .google: return Color(hue: 0.6, saturation: 0.7, brightness: 0.8)
+        case .warp: return Color(hue: 0.12, saturation: 0.85, brightness: 0.92)
         case .ollama: return Color(hue: 0.0, saturation: 0.0, brightness: 0.45)
         case .cursor: return Color(hue: 0.75, saturation: 0.6, brightness: 0.9)
         case .copilot: return Color(hue: 0.55, saturation: 0.6, brightness: 0.7)
@@ -104,6 +108,11 @@ enum LLMProvider: String, Codable, CaseIterable, Identifiable {
         case .google:
             return [
                 home + "/.config/gcloud/logs/"
+            ]
+        case .warp:
+            return [
+                home + "/Library/Application Support/dev.warp.Warp-Stable/",
+                home + "/.warp/"
             ]
         case .cursor:
             return [

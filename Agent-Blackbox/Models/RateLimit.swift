@@ -209,6 +209,12 @@ struct ProviderRateLimit: Codable, Hashable {
         dailyTokenLimit: nil, dailyCostLimit: nil, monthlyCostLimit: nil
     )
 
+    static let defaultWarp = ProviderRateLimit(
+        rpmLimit: 120, tpmLimit: 80_000,
+        requestsPerHourLimit: 3_000, tokensPerHourLimit: 2_000_000,
+        dailyTokenLimit: nil, dailyCostLimit: 15, monthlyCostLimit: 150
+    )
+
     /// 默认配置表（按 provider）
     static func defaults() -> [String: ProviderRateLimit] {
         var dict: [String: ProviderRateLimit] = [:]
@@ -224,6 +230,8 @@ struct ProviderRateLimit: Codable, Hashable {
                     requestsPerHourLimit: 1_000, tokensPerHourLimit: 1_000_000,
                     dailyTokenLimit: nil, dailyCostLimit: 10, monthlyCostLimit: 100
                 )
+            case .warp:
+                dict[p.rawValue] = .defaultWarp
             case .ollama, .lmstudio:
                 dict[p.rawValue] = .defaultLocal
             default:
