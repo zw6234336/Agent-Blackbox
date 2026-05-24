@@ -116,6 +116,12 @@ struct MonitorConfig: Codable, Equatable {
     var openaiUpstreamUrl: String = "https://api.openai.com"
     var anthropicUpstreamUrl: String = "https://api.anthropic.com"
     
+    // Automated Interception Settings
+    var enableVSCodeClineInterception: Bool = false
+    var enableVSCodeRooClineInterception: Bool = false
+    var enableCursorClineInterception: Bool = false
+    var enableCursorRooClineInterception: Bool = false
+    
     /// Token rates per 1K tokens (input, output) in USD
     /// 来源：各厂商官方定价页（2025-06）
     var tokenRates: [String: TokenRate] = [

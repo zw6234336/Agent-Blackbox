@@ -17,6 +17,7 @@ struct AgentBlackboxApp: App {
     @StateObject private var compilationService = CompilationService()
     @StateObject private var planDetector = PlanDetectionService()
     @StateObject private var proxyServer = ProxyServerService()
+    @StateObject private var clientInterception = ClientInterceptionService()
 
     @Environment(\.openWindow) private var openWindow
 
@@ -35,6 +36,7 @@ struct AgentBlackboxApp: App {
                 .environmentObject(compilationService)
                 .environmentObject(planDetector)
                 .environmentObject(proxyServer)
+                .environmentObject(clientInterception)
                 .frame(minWidth: 1000, minHeight: 600)
                 .task {
                     database.initializeIfNeeded()
@@ -55,8 +57,14 @@ struct AgentBlackboxApp: App {
                         fileMonitor.startMonitoring(paths: paths)
                     }
 
+                    // Bind Client Interception Service
+                    clientInterception.bind(config: configService)
+
                     // 后台自动检测本地套餐授权（首次启动）
                     await planDetector.detectAll()
+                }
+                .onChange(of: configService.config) { oldValue, newValue in
+                    clientInterception.syncWithConfig()
                 }
         }
         .windowStyle(.titleBar)
@@ -67,6 +75,7 @@ struct AgentBlackboxApp: App {
                 .environmentObject(configService)
                 .environmentObject(database)
                 .environmentObject(proxyServer)
+                .environmentObject(clientInterception)
         }
         
         MenuBarExtra("Agent Blackbox", systemImage: "bolt.shield.fill") {

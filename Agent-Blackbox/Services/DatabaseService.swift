@@ -55,6 +55,9 @@ final class DatabaseService: ObservableObject {
             let dbURL = Self.defaultDatabaseURL
             try FileManager.default.createDirectory(at: dbURL.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: nil)
             db = try Connection(dbURL.path)
+            
+            // Enable WAL mode for high-concurrency writes
+            try db?.execute("PRAGMA journal_mode = WAL;")
 
             // Create logs table with all fields
             try db?.run(logsTable.create(ifNotExists: true) { t in

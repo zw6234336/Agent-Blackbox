@@ -5,6 +5,7 @@ struct SettingsView: View {
     @EnvironmentObject var configService: ConfigService
     @EnvironmentObject var database: DatabaseService
     @EnvironmentObject var proxyServer: ProxyServerService
+    @EnvironmentObject var clientInterception: ClientInterceptionService
     @State private var showClearConfirmation = false
     @State private var cleanupResult: String? = nil
 
@@ -25,6 +26,11 @@ struct SettingsView: View {
                     Label("网关代理", systemImage: "network")
                 }
 
+            clientInterceptionSettings
+                .tabItem {
+                    Label("客户端接管", systemImage: "app.badge.checkmark")
+                }
+
             tokenRateSettings
                 .tabItem {
                     Label("费率配置", systemImage: "dollarsign.circle")
@@ -35,7 +41,7 @@ struct SettingsView: View {
                     Label("数据管理", systemImage: "externaldrive")
                 }
         }
-        .frame(width: 600, height: 480)
+        .frame(width: 650, height: 500)
     }
 
     private var generalSettings: some View {
@@ -337,5 +343,90 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    private var clientInterceptionSettings: some View {
+        Form {
+            Section("自动接管配置") {
+                Text("开启后，本应用将自动修改目标插件配置文件，使其路由经过本地网关代理。关闭或退出本程序时将自动还原为原始配置。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.bottom, 4)
+                
+                Toggle(isOn: $configService.config.enableVSCodeClineInterception) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("VS Code - Cline")
+                        clientInterceptionStatus(for: .vscodeCline)
+                    }
+                }
+                
+                Toggle(isOn: $configService.config.enableVSCodeRooClineInterception) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("VS Code - Roo-Cline")
+                        clientInterceptionStatus(for: .vscodeRooCline)
+                    }
+                }
+                
+                Toggle(isOn: $configService.config.enableCursorClineInterception) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Cursor - Cline")
+                        clientInterceptionStatus(for: .cursorCline)
+                    }
+                }
+                
+                Toggle(isOn: $configService.config.enableCursorRooClineInterception) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Cursor - Roo-Cline")
+                        clientInterceptionStatus(for: .cursorRooCline)
+                    }
+                }
+            }
+            
+            Section("Cursor 核心设置 (说明)") {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("对于 Cursor 自带的 AI 模型调用，为保证软件稳定性，请在 Cursor 内手动覆盖 Base URL：")
+                    Text("1. 打开 Cursor Settings -> Models")
+                    Text("2. 在 OpenAI 或 Anthropic 处展开 \"Override Base URL\"")
+                    Text("3. 填写：http://127.0.0.1:\(String(configService.config.proxyPort))/v1")
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(Color.accentGradientStart)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.vertical, 4)
+            }
+            
+            Section("沙盒与文件权限说明") {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("若开关提示“写入失败”，可能是因为系统 Sandbox (沙盒模式) 开启，禁止本软件读写其他应用的目录。")
+                    Text("请确保在 Xcode / Entitlements 中关闭沙盒，或赋予了完整磁盘访问权限。")
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.vertical, 4)
+            }
+        }
+        .formStyle(.grouped)
+    }
+    
+    @ViewBuilder
+    private func clientInterceptionStatus(for client: InterceptClient) -> some View {
+        if let error = clientInterception.errors[client] {
+            Text(error)
+                .font(.caption2)
+                .foregroundStyle(.red)
+        } else if clientInterception.activeStates[client] == true {
+            HStack(spacing: 4) {
+                Circle().fill(Color.green).frame(width: 6, height: 6)
+                Text("已接管 (已备份原始设置)")
+                    .font(.caption2)
+                    .foregroundStyle(.green)
+            }
+        } else {
+            let pathExists = FileManager.default.fileExists(atPath: client.settingsURL.path)
+            Text(pathExists ? "就绪 (未接管)" : "未检测到该插件配置文件")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
     }
 }

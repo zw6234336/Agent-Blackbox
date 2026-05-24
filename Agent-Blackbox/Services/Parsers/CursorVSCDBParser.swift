@@ -11,8 +11,45 @@ struct CursorVSCDBParser: LogParser {
     func parse(url: URL, content: String) -> [ParsedLog] {
         var results: [ParsedLog] = []
         
+        let fm = FileManager.default
+        let tempId = UUID().uuidString
+        let tempDir = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+        let tempDBURL = tempDir.appendingPathComponent("cursor_state_\(tempId).vscdb")
+        
+        let walURL = url.deletingPathExtension().appendingPathExtension("vscdb-wal")
+        let shmURL = url.deletingPathExtension().appendingPathExtension("vscdb-shm")
+        let tempWalURL = tempDBURL.deletingPathExtension().appendingPathExtension("vscdb-wal")
+        let tempShmURL = tempDBURL.deletingPathExtension().appendingPathExtension("vscdb-shm")
+        
+        var copiedWal = false
+        var copiedShm = false
+        
         do {
-            let db = try Connection(url.path, readonly: true)
+            // Copy main db
+            try fm.copyItem(at: url, to: tempDBURL)
+            
+            // Copy WAL/SHM files if they exist to capture latest changes
+            if fm.fileExists(atPath: walURL.path) {
+                try? fm.copyItem(at: walURL, to: tempWalURL)
+                copiedWal = true
+            }
+            if fm.fileExists(atPath: shmURL.path) {
+                try? fm.copyItem(at: shmURL, to: tempShmURL)
+                copiedShm = true
+            }
+        } catch {
+            print("Failed to copy Cursor VSCDB to temporary location: \(error.localizedDescription)")
+            return []
+        }
+        
+        defer {
+            try? fm.removeItem(at: tempDBURL)
+            if copiedWal { try? fm.removeItem(at: tempWalURL) }
+            if copiedShm { try? fm.removeItem(at: tempShmURL) }
+        }
+        
+        do {
+            let db = try Connection(tempDBURL.path, readonly: true)
             // The table is `ItemTable`
             // Columns: key (TEXT), value (TEXT)
             let itemTable = Table("ItemTable")
@@ -36,7 +73,7 @@ struct CursorVSCDBParser: LogParser {
             }
             
         } catch {
-            print("Failed to parse VSCDB at \(url.path): \(error)")
+            print("Failed to parse copied VSCDB: \(error.localizedDescription)")
         }
         
         return results

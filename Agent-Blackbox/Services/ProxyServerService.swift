@@ -218,17 +218,86 @@ final class ProxyServerService: ObservableObject {
 
     // MARK: - Request Forwarding
 
-    private func handleCompleteRequest(connection: NWConnection, method: String, path: String, headers: [String: String], body: Data) {
+    private func resolveUpstreamBaseURL(path: String, headers: [String: String], body: Data) -> String {
         guard let config = configService?.config else {
+            return "https://api.openai.com"
+        }
+        
+        // 1. Check custom headers for explicit target base URL (lowest latency control)
+        let customHeadersKeys = ["x-upstream-url", "x-base-url", "x-target-url", "openai-base-url"]
+        for key in customHeadersKeys {
+            if let customUrl = headers[key], !customUrl.isEmpty {
+                Logger.shared.info("网关代理: 发现自定义目标上游 URL: \(customUrl)")
+                return customUrl
+            }
+        }
+        
+        // 2. Check Authorization header prefix to guess provider
+        if let auth = headers["authorization"] {
+            let token = auth.replacingOccurrences(of: "Bearer ", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if token.hasPrefix("sk-or-") {
+                Logger.shared.info("网关代理: 检测到 OpenRouter Token，重定向至 OpenRouter 上游")
+                return "https://openrouter.ai/api"
+            }
+            if token.hasPrefix("sk-ant-") {
+                Logger.shared.info("网关代理: 检测到 Anthropic Token，重定向至 Anthropic 上游")
+                return "https://api.anthropic.com"
+            }
+        }
+        
+        // 3. Inspect JSON body to check requested model
+        if let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+           let model = json["model"] as? String {
+            
+            let modelLower = model.lowercased()
+            if modelLower.contains("deepseek") {
+                Logger.shared.info("网关代理: 检测到 DeepSeek 模型 \(model)，自动路由至 DeepSeek 官方 API")
+                return "https://api.deepseek.com"
+            }
+            if modelLower.contains("gemini") {
+                Logger.shared.info("网关代理: 检测到 Gemini 模型 \(model)，自动路由至 Google Gemini 官方 API")
+                return "https://generativelanguage.googleapis.com/v1beta/openai"
+            }
+            if modelLower.contains("qwen") {
+                Logger.shared.info("网关代理: 检测到 Qwen 模型 \(model)，自动路由至阿里 DashScope API")
+                return "https://dashscope.aliyuncs.com"
+            }
+            if modelLower.contains("glm-") || modelLower.contains("zhipu") {
+                Logger.shared.info("网关代理: 检测到智谱 GLM 模型 \(model)，自动路由至智谱清言 API")
+                return "https://open.bigmodel.cn"
+            }
+            if modelLower.contains("ollama") {
+                Logger.shared.info("网关代理: 检测到 Ollama 模型 \(model)，自动路由至本地 Ollama 默认服务")
+                return "http://127.0.0.1:11434"
+            }
+        }
+        
+        // 4. Default Fallback based on path
+        if path.contains("messages") {
+            return config.anthropicUpstreamUrl
+        } else {
+            return config.openaiUpstreamUrl
+        }
+    }
+
+    private func handleCompleteRequest(connection: NWConnection, method: String, path: String, headers: [String: String], body: Data) {
+        guard configService?.config != nil else {
             sendHTTPResponse(connection: connection, statusCode: 500, statusText: "Internal Error", headers: [:], body: Data("Missing configuration".utf8))
             return
         }
 
-        // Determine Upstream URL
+        // Determine Upstream URL dynamically
         let isAnthropic = path.contains("messages")
-        let upstreamBase = isAnthropic ? config.anthropicUpstreamUrl : config.openaiUpstreamUrl
+        let upstreamBase = resolveUpstreamBaseURL(path: path, headers: headers, body: body)
         let cleanBase = upstreamBase.hasSuffix("/") ? String(upstreamBase.dropLast()) : upstreamBase
-        let cleanPath = path.hasPrefix("/") ? path : "/\(path)"
+        var cleanPath = path.hasPrefix("/") ? path : "/\(path)"
+        
+        // For Gemini, rewrite "/v1/chat/completions" to "/chat/completions" if the base contains openapi
+        if cleanBase.contains("generativelanguage.googleapis.com") {
+            if cleanPath.hasPrefix("/v1/") {
+                cleanPath = String(cleanPath.dropFirst(3)) // "/v1/chat/completions" -> "/chat/completions"
+            }
+        }
         
         guard let upstreamURL = URL(string: cleanBase + cleanPath) else {
             sendHTTPResponse(connection: connection, statusCode: 500, statusText: "Internal Error", headers: [:], body: Data("Invalid Upstream URL".utf8))
@@ -305,7 +374,7 @@ final class ProxyServerService: ObservableObject {
         }
 
         // Send to real API
-        let delegate = ProxySessionDelegate(connection: connection) { [weak self] httpResponse, responseData, error in
+        let delegate = ProxySessionDelegate(connection: connection) { [weak self] httpResponse, responseData, isStreamingResponse, error in
             Task { @MainActor in
                 self?.capturedCount += 1
                 let duration = Date().timeIntervalSince(startTime)
@@ -317,6 +386,7 @@ final class ProxyServerService: ObservableObject {
                     client: client,
                     path: path,
                     isAnthropic: isAnthropic,
+                    isStreamingResponse: isStreamingResponse,
                     reqData: reqData,
                     respData: responseData,
                     statusCode: statusCode,
@@ -337,6 +407,7 @@ final class ProxyServerService: ObservableObject {
         client: String,
         path: String,
         isAnthropic: Bool,
+        isStreamingResponse: Bool,
         reqData: RequestData,
         respData: Data,
         statusCode: Int,
@@ -344,7 +415,7 @@ final class ProxyServerService: ObservableObject {
         error: Error?
     ) {
         // Parse response content and tokens
-        let isStreaming = respData.starts(with: Data("data:".utf8)) || respData.contains(Data("text/event-stream".utf8))
+        let isStreaming = isStreamingResponse
         
         let parsedResp: ResponseData
         if isStreaming {
@@ -390,18 +461,25 @@ final class ProxyServerService: ObservableObject {
         // Calculate Cost
         let cost = calculateCost(model: model, promptTokens: promptTokensVal ?? 0, completionTokens: completionTokensVal ?? 0)
 
-        // Classify Provider
+        // Classify Provider based on path and model name keywords
         let provider: LLMProvider
-        if isAnthropic {
+        let modelLower = model.lowercased()
+        if isAnthropic || modelLower.contains("claude") || modelLower.contains("anthropic") {
             provider = .anthropic
-        } else if model.lowercased().contains("gpt") || model.lowercased().contains("o1") || model.lowercased().contains("o3") {
+        } else if modelLower.contains("gpt") || modelLower.contains("o1") || modelLower.contains("o3") {
             provider = .openai
-        } else if model.lowercased().contains("gemini") {
+        } else if modelLower.contains("gemini") {
             provider = .google
-        } else if model.lowercased().contains("deepseek") {
+        } else if modelLower.contains("deepseek") {
             provider = .deepseek
-        } else if model.lowercased().contains("qwen") {
+        } else if modelLower.contains("qwen") {
             provider = .qwen
+        } else if modelLower.contains("ollama") {
+            provider = .ollama
+        } else if modelLower.contains("kimi") || modelLower.contains("moonshot") {
+            provider = .kimi
+        } else if modelLower.contains("glm") || modelLower.contains("zhipu") {
+            provider = .zhipu
         } else {
             provider = .custom
         }
@@ -484,9 +562,10 @@ private class ProxySessionDelegate: NSObject, URLSessionDataDelegate {
     let clientConnection: NWConnection
     var responseHeadersSent = false
     var responseData = Data()
-    let onResponseComplete: (HTTPURLResponse?, Data, Error?) -> Void
+    var isStreamingResponse = false
+    let onResponseComplete: (HTTPURLResponse?, Data, Bool, Error?) -> Void
     
-    init(connection: NWConnection, onResponseComplete: @escaping (HTTPURLResponse?, Data, Error?) -> Void) {
+    init(connection: NWConnection, onResponseComplete: @escaping (HTTPURLResponse?, Data, Bool, Error?) -> Void) {
         self.clientConnection = connection
         self.onResponseComplete = onResponseComplete
     }
@@ -505,10 +584,10 @@ private class ProxySessionDelegate: NSObject, URLSessionDataDelegate {
         }
         
         // If streaming, ensure Transfer-Encoding is chunked
-        let isStreaming = clientHeaders["content-type"]?.contains("text/event-stream") ?? false || 
-                           clientHeaders["Content-Type"]?.contains("text/event-stream") ?? false
+        isStreamingResponse = clientHeaders["content-type"]?.contains("text/event-stream") ?? false || 
+                              clientHeaders["Content-Type"]?.contains("text/event-stream") ?? false
         
-        if isStreaming {
+        if isStreamingResponse {
             clientHeaders["Transfer-Encoding"] = "chunked"
             clientHeaders.removeValue(forKey: "Content-Length")
             clientHeaders.removeValue(forKey: "content-length")
@@ -538,7 +617,7 @@ private class ProxySessionDelegate: NSObject, URLSessionDataDelegate {
         sendChunkEnd(connection: clientConnection)
         
         let httpResponse = task.response as? HTTPURLResponse
-        onResponseComplete(httpResponse, responseData, error)
+        onResponseComplete(httpResponse, responseData, isStreamingResponse, error)
         
         session.finishTasksAndInvalidate()
     }
