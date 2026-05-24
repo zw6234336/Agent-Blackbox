@@ -30,6 +30,11 @@ struct ContentView: View {
                         .tag(4)
                 }
 
+                Section("网关") {
+                    Label("代理监控", systemImage: "bolt.shield")
+                        .tag(7)
+                }
+
                 Section("系统") {
                     Label("监控", systemImage: "eye.circle")
                         .tag(3)
@@ -60,6 +65,8 @@ struct ContentView: View {
                     CompilationView()
                         .environmentObject(compilationService)
                         .environmentObject(database)
+                case 7:
+                    ProxyDashboardView()
                 default:
                     DashboardView()
                 }
