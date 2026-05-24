@@ -5,24 +5,7 @@ struct CompilationView: View {
     @EnvironmentObject var database: DatabaseService
     @State private var selectedCompilation: LogCompilation?
     @State private var showNewSheet = false
-    @FocusState private var focusedField: NewCompilationField?
-
-    // New compilation form state (inline, same pattern as CollectionView)
-    @State private var newName = ""
-    @State private var newDesc = ""
-    @State private var newFormat: CompilationOutputFormat = .markdown
-    @State private var newProviders: Set<String> = []
-    @State private var newHasStartDate = false
-    @State private var newHasEndDate = false
-    @State private var newStartDate = Date().addingTimeInterval(-7 * 86400)
-    @State private var newEndDate = Date()
-    @State private var newBookmarkedOnly = false
     @State private var availableProviders: [LLMProvider] = []
-
-    private enum NewCompilationField {
-        case name
-        case description
-    }
 
     var body: some View {
         NavigationSplitView {
@@ -35,7 +18,15 @@ struct CompilationView: View {
             }
         }
         .sheet(isPresented: $showNewSheet) {
-            newCompilationForm
+            NewCompilationSheet(
+                availableProviders: availableProviders,
+                onCancel: {
+                    showNewSheet = false
+                },
+                onCreate: { draft in
+                    createCompilation(from: draft)
+                }
+            )
         }
         .onAppear {
             compilationService.initializeIfNeeded()
@@ -151,127 +142,18 @@ struct CompilationView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    // MARK: - New Compilation Form (inline, like CollectionView)
-
-    private var newCompilationForm: some View {
-        VStack(spacing: 14) {
-            Text("新建编译")
-                .font(.headline)
-
-            TextField("名称", text: $newName)
-                .textFieldStyle(.roundedBorder)
-                .focused($focusedField, equals: .name)
-
-            TextField("描述（可选）", text: $newDesc)
-                .textFieldStyle(.roundedBorder)
-                .focused($focusedField, equals: .description)
-
-            HStack {
-                Text("输出格式")
-                    .foregroundStyle(.secondary)
-                    .frame(width: 70, alignment: .leading)
-                Picker("", selection: $newFormat) {
-                    ForEach(CompilationOutputFormat.allCases) { fmt in
-                        Text(fmt.displayName).tag(fmt)
-                    }
-                }
-                .pickerStyle(.segmented)
-            }
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text("供应商筛选")
-                    .foregroundStyle(.secondary)
-                    .font(.caption)
-                FlowLayout(spacing: 6) {
-                    ForEach(availableProviders, id: \.rawValue) { provider in
-                        FilterChip(
-                            label: provider.displayName,
-                            isSelected: newProviders.contains(provider.rawValue),
-                            color: provider.brandColor
-                        ) {
-                            if newProviders.contains(provider.rawValue) {
-                                newProviders.remove(provider.rawValue)
-                            } else {
-                                newProviders.insert(provider.rawValue)
-                            }
-                        }
-                    }
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            HStack {
-                Toggle("起始日期", isOn: $newHasStartDate)
-                    .toggleStyle(.checkbox)
-                if newHasStartDate {
-                    DatePicker("", selection: $newStartDate, displayedComponents: .date)
-                        .labelsHidden()
-                }
-            }
-
-            HStack {
-                Toggle("截止日期", isOn: $newHasEndDate)
-                    .toggleStyle(.checkbox)
-                if newHasEndDate {
-                    DatePicker("", selection: $newEndDate, displayedComponents: .date)
-                        .labelsHidden()
-                }
-            }
-
-            Toggle("仅收藏日志", isOn: $newBookmarkedOnly)
-                .toggleStyle(.checkbox)
-
-            Spacer(minLength: 8)
-
-            HStack {
-                Button("取消") {
-                    showNewSheet = false
-                    resetForm()
-                }
-                .keyboardShortcut(.cancelAction)
-
-                Spacer()
-
-                Button("创建") {
-                    createCompilation()
-                }
-                .keyboardShortcut(.defaultAction)
-                .disabled(newName.isEmpty)
-            }
-        }
-        .padding()
-        .frame(width: 420, height: 480)
-        .onAppear {
-            focusedField = .name
-        }
-    }
-
-    private func resetForm() {
-        newName = ""
-        newDesc = ""
-        newFormat = .markdown
-        newProviders = []
-        newHasStartDate = false
-        newHasEndDate = false
-        newBookmarkedOnly = false
-        newStartDate = Date().addingTimeInterval(-7 * 86400)
-        newEndDate = Date()
-        focusedField = .name
-    }
-
-    private func createCompilation() {
+    private func createCompilation(from draft: NewCompilationDraft) {
         compilationService.initializeIfNeeded()
         let created = compilationService.createCompilation(
-            name: newName,
-            description: newDesc,
-            format: newFormat,
-            providers: newProviders.compactMap { LLMProvider(rawValue: $0) },
-            startDate: newHasStartDate ? newStartDate : nil,
-            endDate: newHasEndDate ? newEndDate : nil,
-            bookmarkedOnly: newBookmarkedOnly
+            name: draft.name,
+            description: draft.description,
+            format: draft.format,
+            providers: draft.providers.compactMap { LLMProvider(rawValue: $0) },
+            startDate: draft.hasStartDate ? draft.startDate : nil,
+            endDate: draft.hasEndDate ? draft.endDate : nil,
+            bookmarkedOnly: draft.bookmarkedOnly
         )
         showNewSheet = false
-        resetForm()
         selectedCompilation = created
         compilationService.startGeneration(id: created.id)
     }
@@ -544,6 +426,124 @@ struct CompilationView: View {
                         .foregroundStyle(.tertiary)
                 }
             }
+        }
+    }
+}
+
+private struct NewCompilationDraft {
+    var name = ""
+    var description = ""
+    var format: CompilationOutputFormat = .markdown
+    var providers: Set<String> = []
+    var hasStartDate = false
+    var hasEndDate = false
+    var startDate = Date().addingTimeInterval(-7 * 86400)
+    var endDate = Date()
+    var bookmarkedOnly = false
+}
+
+private struct NewCompilationSheet: View {
+    let availableProviders: [LLMProvider]
+    let onCancel: () -> Void
+    let onCreate: (NewCompilationDraft) -> Void
+
+    @State private var draft = NewCompilationDraft()
+    @FocusState private var focusedField: Field?
+
+    private enum Field {
+        case name
+        case description
+    }
+
+    var body: some View {
+        VStack(spacing: 14) {
+            Text("新建编译")
+                .font(.headline)
+
+            TextField("名称", text: $draft.name)
+                .textFieldStyle(.roundedBorder)
+                .focused($focusedField, equals: .name)
+
+            TextField("描述（可选）", text: $draft.description)
+                .textFieldStyle(.roundedBorder)
+                .focused($focusedField, equals: .description)
+
+            HStack {
+                Text("输出格式")
+                    .foregroundStyle(.secondary)
+                    .frame(width: 70, alignment: .leading)
+                Picker("", selection: $draft.format) {
+                    ForEach(CompilationOutputFormat.allCases) { fmt in
+                        Text(fmt.displayName).tag(fmt)
+                    }
+                }
+                .pickerStyle(.segmented)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("供应商筛选")
+                    .foregroundStyle(.secondary)
+                    .font(.caption)
+                FlowLayout(spacing: 6) {
+                    ForEach(availableProviders, id: \.rawValue) { provider in
+                        FilterChip(
+                            label: provider.displayName,
+                            isSelected: draft.providers.contains(provider.rawValue),
+                            color: provider.brandColor
+                        ) {
+                            if draft.providers.contains(provider.rawValue) {
+                                draft.providers.remove(provider.rawValue)
+                            } else {
+                                draft.providers.insert(provider.rawValue)
+                            }
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            HStack {
+                Toggle("起始日期", isOn: $draft.hasStartDate)
+                    .toggleStyle(.checkbox)
+                if draft.hasStartDate {
+                    DatePicker("", selection: $draft.startDate, displayedComponents: .date)
+                        .labelsHidden()
+                }
+            }
+
+            HStack {
+                Toggle("截止日期", isOn: $draft.hasEndDate)
+                    .toggleStyle(.checkbox)
+                if draft.hasEndDate {
+                    DatePicker("", selection: $draft.endDate, displayedComponents: .date)
+                        .labelsHidden()
+                }
+            }
+
+            Toggle("仅收藏日志", isOn: $draft.bookmarkedOnly)
+                .toggleStyle(.checkbox)
+
+            Spacer(minLength: 8)
+
+            HStack {
+                Button("取消") {
+                    onCancel()
+                }
+                .keyboardShortcut(.cancelAction)
+
+                Spacer()
+
+                Button("创建") {
+                    onCreate(draft)
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(draft.name.isEmpty)
+            }
+        }
+        .padding()
+        .frame(width: 420, height: 480)
+        .onAppear {
+            focusedField = .name
         }
     }
 }

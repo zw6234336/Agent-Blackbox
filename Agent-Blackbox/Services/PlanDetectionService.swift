@@ -22,7 +22,8 @@ struct DetectedPlan: Equatable, Identifiable {
 ///
 /// 检测策略：
 ///  - GitHub Copilot → 读取 ~/.config/gh/hosts.yml 或 VS Code state.vscdb 中的 OAuth Token
-///                     → 调用 GitHub API 获取 Copilot 套餐
+///                     → 调用 /copilot_internal/v2/token 解析 SKU 字段获取套餐
+///                     → 回退到 /copilot_internal/user 获取 plan_type
 ///  - Cursor         → 读取 Cursor 的 storage.db 中的 accessToken
 ///                     → 调用 Cursor API 获取套餐
 ///  - Claude Desktop → 检查应用是否安装，读取配置判断是 API Key 还是消费套餐
@@ -76,46 +77,100 @@ final class PlanDetectionService: ObservableObject {
     // MARK: - GitHub Copilot
 
     private func detectCopilot() async -> DetectedPlan? {
-        guard let token = readGitHubToken() else { return nil }
-        return await fetchCopilotPlan(token: token)
-    }
+        // 优先读 VS Code/Cursor 的 Copilot token（含 copilot scope）
+        // 其次读 gh CLI token（通常无 copilot scope）
+        let tokens = readAllCopilotTokens()
 
-    private func readGitHubToken() -> String? {
-        // 方案 1：GitHub CLI — ~/.config/gh/hosts.yml
-        let hostsPath = NSHomeDirectory() + "/.config/gh/hosts.yml"
-        if let content = try? String(contentsOfFile: hostsPath, encoding: .utf8) {
-            var inGitHubSection = false
-            for line in content.components(separatedBy: "\n") {
-                if line.hasPrefix("github.com:") {
-                    inGitHubSection = true
-                    continue
-                }
-                // 子项以 2+ 个空格 / tab 开头；否则退出 github.com section
-                if inGitHubSection && !line.hasPrefix("  ") && !line.hasPrefix("\t") {
-                    inGitHubSection = false
-                }
-                if inGitHubSection {
-                    let t = line.trimmingCharacters(in: .whitespaces)
-                    if t.hasPrefix("oauth_token:") {
-                        let v = String(t.dropFirst("oauth_token:".count)).trimmingCharacters(in: .whitespaces)
-                        if !v.isEmpty { return v }
-                    }
-                }
+        guard !tokens.isEmpty else {
+            Logger.shared.info("Copilot 检测: 未找到任何 GitHub/Copilot token")
+            return nil
+        }
+
+        // 策略 1: 用 Copilot token 调用 /copilot_internal/v2/token 解析 SKU
+        for token in tokens {
+            if let plan = await detectViaCopilotTokenAPI(token) {
+                return plan
             }
         }
 
-        // 方案 2：VS Code / Cursor 的 state.vscdb 中 Copilot 扩展存储的 token
+        // 策略 2: 用任意 token 调用 /copilot_internal/user
+        for token in tokens {
+            if let plan = await detectViaCopilotUserAPI(token) {
+                return plan
+            }
+        }
+
+        // 策略 3: 用 gh CLI token 调用 /user 获取 GitHub plan + Copilot 扩展判断
+        if let ghToken = readGHCLIToken() {
+            if let plan = await detectViaGitHubUserAPI(ghToken) {
+                return plan
+            }
+        }
+
+        // 最终回退：有 token 但 API 全部失败 → 按 Pro 默认处理，但标注来源
+        Logger.shared.info("Copilot 检测: API 均失败，回退到默认 Copilot Pro")
+        return DetectedPlan(
+            provider: .copilot,
+            planName: "Copilot (已授权，API 未响应)",
+            rateLimit: ProviderRateLimit.defaultCopilotPro,
+            source: "本地凭证（回退默认）",
+            detectedAt: Date()
+        )
+    }
+
+    // MARK: Token 读取
+
+    /// 读取所有可用的 Copilot 相关 token
+    private func readAllCopilotTokens() -> [String] {
+        var tokens: [String] = []
+
+        // 1. VS Code / Cursor state.vscdb 中的 Copilot token（最可靠）
         let vscdbPaths = [
             NSHomeDirectory() + "/Library/Application Support/Code/User/globalStorage/state.vscdb",
             NSHomeDirectory() + "/Library/Application Support/Cursor/User/globalStorage/state.vscdb",
         ]
         for path in vscdbPaths {
-            if let token = readCopilotTokenFromVSCDB(path: path) { return token }
+            if let token = readCopilotTokenFromVSCDB(path: path) {
+                Logger.shared.info("Copilot 检测: 从 vscdb 读取到 token (prefix: \(token.prefix(8)))")
+                tokens.append(token)
+            }
         }
 
+        // 2. gh CLI token（可能无 copilot scope，但可尝试）
+        if let ghToken = readGHCLIToken() {
+            Logger.shared.info("Copilot 检测: 从 gh CLI 读取到 token (prefix: \(ghToken.prefix(8)))")
+            tokens.append(ghToken)
+        }
+
+        return tokens
+    }
+
+    /// 从 ~/.config/gh/hosts.yml 读取 gh CLI OAuth token
+    private func readGHCLIToken() -> String? {
+        let hostsPath = NSHomeDirectory() + "/.config/gh/hosts.yml"
+        guard let content = try? String(contentsOfFile: hostsPath, encoding: .utf8) else { return nil }
+
+        var inGitHubSection = false
+        for line in content.components(separatedBy: "\n") {
+            if line.hasPrefix("github.com:") {
+                inGitHubSection = true
+                continue
+            }
+            if inGitHubSection && !line.hasPrefix("  ") && !line.hasPrefix("\t") && !line.isEmpty {
+                inGitHubSection = false
+            }
+            if inGitHubSection {
+                let t = line.trimmingCharacters(in: .whitespaces)
+                if t.hasPrefix("oauth_token:") {
+                    let v = String(t.dropFirst("oauth_token:".count)).trimmingCharacters(in: .whitespaces)
+                    if !v.isEmpty { return v }
+                }
+            }
+        }
         return nil
     }
 
+    /// 从 VS Code/Cursor 的 state.vscdb 读取 Copilot token
     private func readCopilotTokenFromVSCDB(path: String) -> String? {
         guard FileManager.default.fileExists(atPath: path) else { return nil }
         do {
@@ -123,75 +178,239 @@ final class PlanDetectionService: ObservableObject {
             let table  = Table("ItemTable")
             let keyCol = Expression<String>("key")
             let valCol = Expression<String>("value")
-            // GitHub Copilot 扩展将 session token 存储在此 key
-            for keyName in ["github.copilot.openai.token", "github.copilot-chat.openaiToken"] {
+
+            // 新旧版本的 key 名称都尝试
+            let keyNames = [
+                "github.copilot.openai.token",
+                "github.copilot-chat.openaiToken",
+                "github.copilot.token",
+                "github.copilot-chat.token",
+                "github.copilot.gh-token",
+            ]
+
+            for keyName in keyNames {
                 guard let row = try? db.pluck(table.filter(keyCol == keyName)) else { continue }
-                // 值格式：{"token":"ghu_xxx","expires_at":1234567890,"refresh_in":1200}
                 let json = row[valCol]
+                // 格式1: JSON {"token":"ghu_xxx","expires_at":...,"refresh_in":...}
                 if let data = json.data(using: .utf8),
-                   let obj  = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                   let tok  = obj["token"] as? String {
+                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let tok = obj["token"] as? String, !tok.isEmpty {
                     return tok
                 }
+                // 格式2: 纯 token 字符串
+                let trimmed = json.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmed.hasPrefix("ghu_") || trimmed.hasPrefix("gho_") || trimmed.hasPrefix("ghp_") {
+                    return trimmed
+                }
             }
-        } catch {}
+        } catch {
+            Logger.shared.info("Copilot 检测: 读取 vscdb 失败: \(error.localizedDescription)")
+        }
         return nil
     }
 
-    private func fetchCopilotPlan(token: String) async -> DetectedPlan? {
-        // GitHub 官方端点（需要对应 scope；CLI token 通常有 repo+gist scope）
-        let endpoints = [
-            "https://api.github.com/user/copilot",
-            "https://api.github.com/copilot_internal/user",
-        ]
+    // MARK: 策略 1: /copilot_internal/v2/token
 
-        for urlStr in endpoints {
-            guard let url = URL(string: urlStr) else { continue }
-            var req = URLRequest(url: url, timeoutInterval: 10)
-            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-            req.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
+    /// 调用 Copilot 内部 token API，解析 SKU 字段获取套餐类型
+    private func detectViaCopilotTokenAPI(_ token: String) async -> DetectedPlan? {
+        guard let url = URL(string: "https://api.github.com/copilot_internal/v2/token") else { return nil }
 
-            guard let (data, response) = try? await URLSession.shared.data(for: req),
-                  let http = response as? HTTPURLResponse,
-                  http.statusCode == 200,
-                  let obj  = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-            else { continue }
+        var req = URLRequest(url: url, timeoutInterval: 10)
+        req.setValue("token \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        req.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
 
-            let planType = obj["plan_type"] as? String ?? ""
-            let seatType = obj["seat_type"] as? String ?? ""
-            let (planName, monthlyReq) = copilotPlanInfo(planType: planType, seatType: seatType)
+        guard let (data, response) = try? await URLSession.shared.data(for: req),
+              let http = response as? HTTPURLResponse else {
+            Logger.shared.info("Copilot 检测: /copilot_internal/v2/token 请求失败")
+            return nil
+        }
 
+        guard http.statusCode == 200 else {
+            Logger.shared.info("Copilot 检测: /copilot_internal/v2/token 返回 \(http.statusCode)")
+            return nil
+        }
+
+        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            Logger.shared.info("Copilot 检测: /copilot_internal/v2/token 响应非 JSON")
+            return nil
+        }
+
+        // 方式 A: 解析 token 字符串中的 sku= 字段
+        // token 格式: "tid=xxx;exp=1234567890;sku=copilot_pro;..."
+        if let tokenStr = obj["token"] as? String {
+            if let plan = parseSKUFromToken(tokenStr) {
+                Logger.shared.info("Copilot 检测: 从 SKU 解析到套餐 \(plan.planName)")
+                return plan
+            }
+        }
+
+        // 方式 B: 响应中可能有直接的 plan 相关字段
+        if let planType = obj["plan_type"] as? String ?? obj["sku"] as? String {
+            let (planName, monthlyReq) = copilotPlanInfo(planType: planType, seatType: obj["seat_type"] as? String ?? "")
+            Logger.shared.info("Copilot 检测: 从 API 字段解析到套餐 \(planName)")
             return DetectedPlan(
                 provider: .copilot,
                 planName: planName,
-                rateLimit: ProviderRateLimit(monthlyRequestLimit: monthlyReq),
-                source: "GitHub API",
+                rateLimit: copilotRateLimit(planName: planName, monthlyReq: monthlyReq),
+                source: "GitHub API (token)",
                 detectedAt: Date()
             )
         }
 
-        // API 无权限，但本地有凭证 → 按 Pro 默认处理
+        Logger.shared.info("Copilot 检测: /copilot_internal/v2/token 响应中无套餐信息")
+        return nil
+    }
+
+    /// 从 Copilot token 字符串解析 SKU
+    private func parseSKUFromToken(_ tokenStr: String) -> DetectedPlan? {
+        // token 格式: "tid=xxx;exp=1234567890;sku=copilot_pro;ct=copilot_chat"
+        let parts = tokenStr.components(separatedBy: ";")
+        var sku: String?
+        for part in parts {
+            let kv = part.components(separatedBy: "=")
+            if kv.count == 2 && kv[0].trimmingCharacters(in: .whitespaces) == "sku" {
+                sku = kv[1].trimmingCharacters(in: .whitespaces)
+            }
+        }
+
+        guard let sku else { return nil }
+
+        let (planName, monthlyReq) = copilotPlanInfo(planType: sku, seatType: "")
         return DetectedPlan(
             provider: .copilot,
-            planName: "Copilot (已授权)",
-            rateLimit: ProviderRateLimit.defaultCopilotPro,
-            source: "本地凭证",
+            planName: planName,
+            rateLimit: copilotRateLimit(planName: planName, monthlyReq: monthlyReq),
+            source: "GitHub API (SKU)",
             detectedAt: Date()
         )
     }
 
+    // MARK: 策略 2: /copilot_internal/user
+
+    /// 调用 Copilot 内部用户 API
+    private func detectViaCopilotUserAPI(_ token: String) async -> DetectedPlan? {
+        guard let url = URL(string: "https://api.github.com/copilot_internal/user") else { return nil }
+
+        var req = URLRequest(url: url, timeoutInterval: 10)
+        req.setValue("token \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        req.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
+
+        guard let (data, response) = try? await URLSession.shared.data(for: req),
+              let http = response as? HTTPURLResponse,
+              http.statusCode == 200,
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            Logger.shared.info("Copilot 检测: /copilot_internal/user 失败")
+            return nil
+        }
+
+        let planType = obj["plan_type"] as? String ?? ""
+        let seatType = obj["seat_type"] as? String ?? ""
+
+        guard !planType.isEmpty else {
+            Logger.shared.info("Copilot 检测: /copilot_internal/user 返回空 plan_type")
+            return nil
+        }
+
+        let (planName, monthlyReq) = copilotPlanInfo(planType: planType, seatType: seatType)
+        Logger.shared.info("Copilot 检测: /copilot_internal/user 解析到套餐 \(planName)")
+        return DetectedPlan(
+            provider: .copilot,
+            planName: planName,
+            rateLimit: copilotRateLimit(planName: planName, monthlyReq: monthlyReq),
+            source: "GitHub API (user)",
+            detectedAt: Date()
+        )
+    }
+
+    // MARK: 策略 3: /user (GitHub plan)
+
+    /// 用 gh CLI token 调用标准 GitHub API，结合 Copilot 扩展存在性推断
+    private func detectViaGitHubUserAPI(_ token: String) async -> DetectedPlan? {
+        guard let url = URL(string: "https://api.github.com/user") else { return nil }
+
+        var req = URLRequest(url: url, timeoutInterval: 10)
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        req.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
+
+        guard let (data, response) = try? await URLSession.shared.data(for: req),
+              let http = response as? HTTPURLResponse,
+              http.statusCode == 200,
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+
+        // /user 返回的是 GitHub 账户的 plan，不是 Copilot 的
+        // 但结合 Copilot 扩展存在性可以推断
+        let login = obj["login"] as? String ?? "unknown"
+        let githubPlan = (obj["plan"] as? [String: Any])?["name"] as? String ?? "free"
+
+        // 如果有 Copilot 扩展 token 存在（在 vscdb 中），说明已激活 Copilot
+        let hasCopilotExtension = FileManager.default.fileExists(
+            atPath: NSHomeDirectory() + "/Library/Application Support/Code/User/globalStorage/state.vscdb"
+        ) || FileManager.default.fileExists(
+            atPath: NSHomeDirectory() + "/Library/Application Support/Cursor/User/globalStorage/state.vscdb"
+        )
+
+        if hasCopilotExtension {
+            // 有扩展 → 至少是 Free 级别，按 Pro 估算（无法精确区分 Free/Pro/Business）
+            Logger.shared.info("Copilot 检测: GitHub 用户 \(login)，plan=\(githubPlan)，检测到 Copilot 扩展")
+            return DetectedPlan(
+                provider: .copilot,
+                planName: "Copilot (已激活)",
+                rateLimit: ProviderRateLimit.defaultCopilotPro,
+                source: "GitHub API + 本地扩展",
+                detectedAt: Date()
+            )
+        }
+
+        Logger.shared.info("Copilot 检测: GitHub 用户 \(login)，plan=\(githubPlan)，无 Copilot 扩展")
+        return nil
+    }
+
+    // MARK: Copilot 套餐映射
+
+    /// 根据 GitHub API 返回的 plan_type 和 seat_type 映射到套餐名和月度请求数
+    ///
+    /// 参考: https://docs.github.com/en/copilot/concepts/billing/copilot-requests
+    /// - Free: 50 premium requests/month
+    /// - Pro:  300 premium requests/month
+    /// - Pro+: 1,500 premium requests/month
+    /// - Business: 300/user/month
+    /// - Enterprise: 1,000/user/month
     private func copilotPlanInfo(planType: String, seatType: String) -> (String, Int?) {
-        switch planType {
-        case "copilot_pro_plus":  return ("Copilot Pro+", 1_500)
-        case "copilot_pro":       return ("Copilot Pro",  300)
-        case "copilot_free":      return ("Copilot Free", 50)
+        let pt = planType.lowercased()
+        let st = seatType.lowercased()
+
+        switch pt {
+        case "copilot_pro_plus", "copilot_pro+", "pro_plus", "pro+":
+            return ("Copilot Pro+", 1_500)
+        case "copilot_pro", "pro":
+            return ("Copilot Pro", 300)
+        case "copilot_free", "free":
+            return ("Copilot Free", 50)
+        case "copilot_business", "business":
+            return ("Copilot Business", 300)
+        case "copilot_enterprise", "enterprise":
+            return ("Copilot Enterprise", 1_000)
         default:
-            if seatType.contains("business") || seatType.contains("enterprise") {
-                return ("Copilot Business/Enterprise", nil)  // 组织管理，无固定月度上限
+            if st.contains("business") {
+                return ("Copilot Business", 300)
+            }
+            if st.contains("enterprise") {
+                return ("Copilot Enterprise", 1_000)
             }
             return ("Copilot Pro", 300)
         }
+    }
+
+    /// 创建 Copilot 对应的完整 ProviderRateLimit
+    private func copilotRateLimit(planName: String, monthlyReq: Int?) -> ProviderRateLimit {
+        var limit = ProviderRateLimit.defaultCopilotPro
+        limit.monthlyRequestLimit = monthlyReq
+        return limit
     }
 
     // MARK: - Cursor
@@ -209,7 +428,6 @@ final class PlanDetectionService: ObservableObject {
             let table  = Table("ItemTable")
             let keyCol = Expression<String>("key")
             let valCol = Expression<String>("value")
-            // Cursor 将 auth token 存储在这两个 key 中（优先 accessToken）
             for keyName in ["cursorAuth/accessToken", "cursorAuth/refreshToken"] {
                 if let row = try? db.pluck(table.filter(keyCol == keyName)) {
                     let v = row[valCol].trimmingCharacters(in: .whitespacesAndNewlines)
@@ -268,7 +486,6 @@ final class PlanDetectionService: ObservableObject {
             )
         }
 
-        // API 无法访问，但本地有登录凭证 → 按 Pro 默认处理
         let email = readCursorEmail()
         let planName = email != nil ? "Cursor Pro (\(email!))" : "Cursor (已授权)"
         return DetectedPlan(
@@ -302,7 +519,6 @@ final class PlanDetectionService: ObservableObject {
             return nil
         }
 
-        // 检查 claude_desktop_config.json 中是否配置了 API Key → 走 API 计费
         let configPath = NSHomeDirectory() + "/Library/Application Support/Claude/claude_desktop_config.json"
         if let data = try? Data(contentsOf: URL(fileURLWithPath: configPath)),
            let obj  = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
@@ -319,7 +535,6 @@ final class PlanDetectionService: ObservableObject {
             }
         }
 
-        // 应用已安装（消费套餐 Free / Pro，无法区分）→ 按 Pro 处理
         return DetectedPlan(
             provider: .claudeDesktop,
             planName: "Claude Desktop (已安装)",
