@@ -58,7 +58,7 @@ flowchart TD
     ROUTE -->|3. 智能转发请求| UP_COMP
     UP_COMP -->|4. 流式回传 Chunk| TEE
     TEE -->|5a. 响应流低延迟回传| C_IDE
-    TEE -->|5b. 旁路分流统计 (Token/时长/资费)| DB
+    TEE -->|"5b. 旁路分流统计 (Token/时长/资费)"| DB
     
     %% 静态扫描路径 (Passive Monitoring)
     C_IDE -->|A. 追加运行历史/日志| F_SYS
