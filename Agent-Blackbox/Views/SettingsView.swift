@@ -4,6 +4,7 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject var configService: ConfigService
     @EnvironmentObject var database: DatabaseService
+    @EnvironmentObject var proxyServer: ProxyServerService
     @State private var showClearConfirmation = false
     @State private var cleanupResult: String? = nil
 
@@ -19,6 +20,11 @@ struct SettingsView: View {
                     Label("监控目录", systemImage: "folder")
                 }
 
+            proxySettings
+                .tabItem {
+                    Label("网关代理", systemImage: "network")
+                }
+
             tokenRateSettings
                 .tabItem {
                     Label("费率配置", systemImage: "dollarsign.circle")
@@ -29,7 +35,7 @@ struct SettingsView: View {
                     Label("数据管理", systemImage: "externaldrive")
                 }
         }
-        .frame(width: 600, height: 450)
+        .frame(width: 600, height: 480)
     }
 
     private var generalSettings: some View {
@@ -71,6 +77,73 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .onChange(of: configService.config) {
+            configService.save()
+        }
+    }
+
+    private var proxySettings: some View {
+        Form {
+            Section("网关设置") {
+                Toggle("启用本地网关代理", isOn: $configService.config.enableProxy)
+                
+                HStack {
+                    Text("监听端口")
+                    Spacer()
+                    TextField("", value: $configService.config.proxyPort, format: .number)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 80)
+                        .multilineTextAlignment(.trailing)
+                }
+            }
+            
+            Section("上游 API 地址") {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("OpenAI 上游地址")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextField("", text: $configService.config.openaiUpstreamUrl)
+                        .textFieldStyle(.roundedBorder)
+                }
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Anthropic 上游地址")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextField("", text: $configService.config.anthropicUpstreamUrl)
+                        .textFieldStyle(.roundedBorder)
+                }
+            }
+            
+            Section {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("配置说明：")
+                        .font(.headline)
+                    Text("1. 请在您的 AI 客户端中将 Base URL 设置为：")
+                    Text("   http://127.0.0.1:\(String(configService.config.proxyPort))/v1")
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(Color.accentGradientStart)
+                    Text("2. 网关会自动转发请求到上述上游 API 地址，并记录精确的 Token 消耗、提示词和耗时。")
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.vertical, 4)
+            }
+        }
+        .formStyle(.grouped)
+        .onChange(of: configService.config.enableProxy) { oldValue, newValue in
+            if newValue {
+                proxyServer.start()
+            } else {
+                proxyServer.stop()
+            }
+        }
+        .onChange(of: configService.config.proxyPort) { oldValue, newValue in
+            if proxyServer.isRunning {
+                proxyServer.stop()
+                proxyServer.start()
+            }
+        }
+        .onChange(of: configService.config) { oldValue, newValue in
             configService.save()
         }
     }

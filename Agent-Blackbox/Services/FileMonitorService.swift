@@ -70,7 +70,8 @@ final class FileMonitorService: ObservableObject {
         Logger.shared.info("开始监控: \(monitoredPaths.joined(separator: ", "))")
         
         Task(priority: .background) {
-            await performInitialScan(paths: normalizedPaths)
+            let patterns = filePatterns
+            await performInitialScan(paths: normalizedPaths, filePatterns: patterns)
         }
     }
 
@@ -141,10 +142,22 @@ final class FileMonitorService: ObservableObject {
         }
     }
     
-    private func performInitialScan(paths: [String]) async {
+    nonisolated private func performInitialScan(paths: [String], filePatterns: [String]) async {
         Logger.shared.info("开始扫描监控目录中的历史日志...")
         let fm = FileManager.default
         var urlsToProcess: [URL] = []
+        
+        let matches: @Sendable (URL) -> Bool = { url in
+            let name = url.lastPathComponent
+            let path = url.path
+            return filePatterns.contains { pattern in
+                if pattern.contains("/") {
+                    return path.wildcardMatch(pattern)
+                } else {
+                    return name.wildcardMatch(pattern)
+                }
+            }
+        }
         
         for path in paths {
             let url = URL(fileURLWithPath: path)
@@ -163,12 +176,12 @@ final class FileMonitorService: ObservableObject {
                     guard let resourceValues = try? fileURL.resourceValues(forKeys: Set(keys)),
                           resourceValues.isRegularFile ?? false else { continue }
                     
-                    if matchesPattern(fileURL) {
+                    if matches(fileURL) {
                         urlsToProcess.append(fileURL)
                     }
                 }
             } else {
-                if matchesPattern(url) {
+                if matches(url) {
                     urlsToProcess.append(url)
                 }
             }
@@ -189,6 +202,6 @@ final class FileMonitorService: ObservableObject {
         Logger.shared.info("历史日志扫描完成！解析并保存了 \(parsedCount) 条历史记录。")
         
         // 扫描全部完成后统一刷新 Dashboard 统计（昂贵的聚合查询仅执行一次）
-        database?.refreshDashboardStats()
+        await database?.refreshDashboardStats()
     }
 }

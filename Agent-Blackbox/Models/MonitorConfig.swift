@@ -110,6 +110,12 @@ struct MonitorConfig: Codable, Equatable {
     var dataRetentionDays: Int = 90
     var exportDirectory: String = NSHomeDirectory() + "/Library/Application Support/Agent-Blackbox/Exports/"
     
+    // Proxy Settings
+    var enableProxy: Bool = true
+    var proxyPort: Int = 9999
+    var openaiUpstreamUrl: String = "https://api.openai.com"
+    var anthropicUpstreamUrl: String = "https://api.anthropic.com"
+    
     /// Token rates per 1K tokens (input, output) in USD
     /// 来源：各厂商官方定价页（2025-06）
     var tokenRates: [String: TokenRate] = [

@@ -5,6 +5,7 @@ struct ContentView: View {
     @EnvironmentObject var database: DatabaseService
     @EnvironmentObject var configService: ConfigService
     @EnvironmentObject var compilationService: CompilationService
+    @EnvironmentObject var proxyServer: ProxyServerService
     @State private var selectedTab = 0
 
     var body: some View {
@@ -75,6 +76,19 @@ struct ContentView: View {
             }
             .toolbar {
                 ToolbarItemGroup {
+                    Button(action: toggleProxy) {
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(proxyServer.isRunning ? Color.green : Color.gray)
+                                .frame(width: 8, height: 8)
+                            Text(proxyServer.isRunning ? "网关运行中" : "网关未启动")
+                                .font(.caption)
+                        }
+                    }
+                    .help(proxyServer.isRunning ? "点击停止网关代理" : "点击启动网关代理")
+
+                    Divider()
+
                     Button(action: toggleMonitoring) {
                         HStack(spacing: 4) {
                             Circle()
@@ -101,6 +115,14 @@ struct ContentView: View {
                     }
                 }
             }
+        }
+    }
+
+    private func toggleProxy() {
+        if proxyServer.isRunning {
+            proxyServer.stop()
+        } else {
+            proxyServer.start()
         }
     }
 

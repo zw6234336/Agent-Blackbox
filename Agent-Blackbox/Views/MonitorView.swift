@@ -4,6 +4,7 @@ struct MonitorView: View {
     @EnvironmentObject var fileMonitor: FileMonitorService
     @EnvironmentObject var configService: ConfigService
     @EnvironmentObject var database: DatabaseService
+    @EnvironmentObject var proxyServer: ProxyServerService
     @State private var showPresets = false
 
     var body: some View {
@@ -29,26 +30,49 @@ struct MonitorView: View {
     
     private var statusHeader: some View {
         HStack(spacing: 16) {
-            PulsingStatusIndicator(isActive: fileMonitor.isMonitoring)
-            
-            VStack(alignment: .leading) {
-                Text(fileMonitor.isMonitoring ? "监控运行中" : "监控已停止")
-                    .font(.headline)
-                Text("已检测 \(fileMonitor.detectedLogs.count) 个日志文件")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            // Card 1: File Monitor
+            HStack(spacing: 12) {
+                PulsingStatusIndicator(isActive: fileMonitor.isMonitoring)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("系统日志文件监控")
+                        .font(.headline)
+                    Text(fileMonitor.isMonitoring ? "监控运行中 (已检测 \(fileMonitor.detectedLogs.count) 个文件)" : "监控已停止")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button(action: toggleMonitoring) {
+                    Image(systemName: fileMonitor.isMonitoring ? "stop.circle.fill" : "play.circle.fill")
+                        .font(.title2)
+                        .foregroundStyle(fileMonitor.isMonitoring ? Color.errorRed : Color.successGreen)
+                }
+                .buttonStyle(.plain)
             }
+            .padding()
+            .background(Color.primary.opacity(0.04))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
             
-            Spacer()
-            
-            Button(action: toggleMonitoring) {
-                Label(
-                    fileMonitor.isMonitoring ? "停止监控" : "开始监控",
-                    systemImage: fileMonitor.isMonitoring ? "stop.circle.fill" : "play.circle.fill"
-                )
+            // Card 2: Proxy Gateway
+            HStack(spacing: 12) {
+                PulsingStatusIndicator(isActive: proxyServer.isRunning)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("本地 AI 网关代理")
+                        .font(.headline)
+                    Text(proxyServer.isRunning ? "监听端口 \(proxyServer.port) (已拦截 \(proxyServer.capturedCount) 请求)" : "网关未启动")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button(action: toggleProxy) {
+                    Image(systemName: proxyServer.isRunning ? "stop.circle.fill" : "play.circle.fill")
+                        .font(.title2)
+                        .foregroundStyle(proxyServer.isRunning ? Color.errorRed : Color.successGreen)
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(fileMonitor.isMonitoring ? Color.errorRed : Color.successGreen)
+            .padding()
+            .background(Color.primary.opacity(0.04))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
         }
         .padding()
     }
@@ -196,6 +220,14 @@ struct MonitorView: View {
         } else {
             let paths = configService.config.monitoredDirectories
             fileMonitor.startMonitoring(paths: paths)
+        }
+    }
+
+    private func toggleProxy() {
+        if proxyServer.isRunning {
+            proxyServer.stop()
+        } else {
+            proxyServer.start()
         }
     }
 }
