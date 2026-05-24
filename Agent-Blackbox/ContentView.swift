@@ -70,6 +70,9 @@ struct ContentView: View {
             .onChange(of: configService.config.filePatterns) { oldValue, newValue in
                 fileMonitor.updateFilePatterns(newValue)
             }
+            .onReceive(NotificationCenter.default.publisher(for: Notification.Name("NavigateToRateLimits"))) { _ in
+                selectedTab = 4
+            }
             .toolbar {
                 ToolbarItemGroup {
                     Button(action: toggleMonitoring) {

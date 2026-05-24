@@ -69,6 +69,17 @@ struct RateLimitView: View {
         .onDisappear {
             tracker.refresh()
         }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("NavigateToRateLimits"))) { notification in
+            if let provider = notification.object as? LLMProvider {
+                withAnimation(.easeInOut(duration: 0.25)) {
+                    selectedTab = .provider(provider)
+                }
+            } else {
+                withAnimation(.easeInOut(duration: 0.25)) {
+                    selectedTab = .overview
+                }
+            }
+        }
         .sheet(item: $editingProvider) { provider in
             RateLimitEditor(provider: provider)
                 .environmentObject(configService)

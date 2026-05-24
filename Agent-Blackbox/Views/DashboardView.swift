@@ -6,6 +6,22 @@ struct DashboardView: View {
     @State private var timeRange: TimeRange = .week
     @State private var isRefreshing = false
 
+    enum DistributionViewMode: String, CaseIterable, Identifiable {
+        case donut = "饼图"
+        case list = "排行"
+        var id: String { self.rawValue }
+    }
+
+    enum MetricType: String, CaseIterable, Identifiable {
+        case calls = "次数"
+        case cost = "费用"
+        var id: String { self.rawValue }
+    }
+
+    @State private var viewMode: DistributionViewMode = .donut
+    @State private var metricType: MetricType = .calls
+    @State private var selectedProvider: LLMProvider? = nil
+
     enum TimeRange: String, CaseIterable {
         case week = "7天"
         case month = "30天"
@@ -28,7 +44,7 @@ struct DashboardView: View {
                     tokenTrendChart
                     providerDistribution
                 }
-                .frame(minHeight: 260)
+                .frame(minHeight: 330)
 
                 // Bottom row: Model chart + Live feed
                 HStack(spacing: 16) {
@@ -181,76 +197,357 @@ struct DashboardView: View {
 
     // MARK: - Provider Distribution
 
-    private var providerDistribution: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("提供商分布")
-                .font(.headline)
-
-            if stats.callsByProvider.isEmpty {
-                emptyChartPlaceholder("暂无数据")
+    private var providerDisplayList: [ProviderDisplayData] {
+        let allStats = stats.providerStats
+        if allStats.isEmpty {
+            let totalCalls = stats.callsByProvider.values.reduce(0, +)
+            return stats.callsByProvider.map { provider, count in
+                let pct = totalCalls > 0 ? Double(count) / Double(totalCalls) : 0.0
+                return ProviderDisplayData(
+                    provider: provider,
+                    count: count,
+                    tokens: 0,
+                    cost: 0.0,
+                    avgDuration: 0.0,
+                    displayValue: metricType == .calls ? Double(count) : 0.0,
+                    percentage: pct
+                )
+            }.sorted { $0.count > $1.count }
+        }
+        
+        let totalVal: Double
+        if metricType == .calls {
+            totalVal = Double(allStats.values.map { $0.count }.reduce(0, +))
+        } else {
+            totalVal = allStats.values.map { $0.cost }.reduce(0.0, +)
+        }
+        
+        return allStats.map { provider, stat in
+            let displayVal = metricType == .calls ? Double(stat.count) : stat.cost
+            let pct = totalVal > 0 ? displayVal / totalVal : 0.0
+            return ProviderDisplayData(
+                provider: provider,
+                count: stat.count,
+                tokens: stat.tokens,
+                cost: stat.cost,
+                avgDuration: stat.avgDuration,
+                displayValue: displayVal,
+                percentage: pct
+            )
+        }.sorted { a, b in
+            if metricType == .calls {
+                return a.count > b.count
             } else {
-                let providerData = stats.callsByProvider.map { ProviderChartData(provider: $0.key, count: $0.value) }
-                    .sorted { $0.count > $1.count }
-                let totalCount = providerData.reduce(0) { $0 + $1.count }
-
-                Chart(providerData) { item in
-                    SectorMark(
-                        angle: .value("调用次数", item.count),
-                        innerRadius: .ratio(0.5),
-                        angularInset: 2
-                    )
-                    .foregroundStyle(item.provider.brandColor)
-                    .cornerRadius(4)
-                    .annotation(position: .overlay) {
-                        // Only show overlay label when slice is large enough (>15%)
-                        if totalCount > 0, Double(item.count) / Double(totalCount) > 0.15 {
-                            VStack(spacing: 1) {
-                                Text(item.provider.displayName)
-                                    .font(.system(size: 10, weight: .semibold))
-                                Text("\(percentText(item.count, total: totalCount))")
-                                    .font(.system(size: 9))
-                                    .opacity(0.8)
-                            }
-                            .foregroundStyle(.white)
-                        }
-                    }
-                }
-                .chartLegend(.hidden)
-
-                // Custom legend with wrapping layout
-                providerLegend(data: providerData, total: totalCount)
+                return a.cost > b.cost
             }
         }
-        .frame(minWidth: 280)
+    }
+
+    private var providerDistribution: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            // Header: Title + Mode Toggle + Metric Toggle
+            HStack(alignment: .center) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("提供商分布")
+                        .font(.headline)
+                    Text(metricType == .calls ? "按调用次数统计" : "按预估费用统计")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+                
+                Spacer()
+                
+                HStack(spacing: 6) {
+                    Picker("指标", selection: $metricType) {
+                        ForEach(MetricType.allCases) { type in
+                            Text(type.rawValue).tag(type)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 80)
+                    
+                    Picker("模式", selection: $viewMode) {
+                        ForEach(DistributionViewMode.allCases) { mode in
+                            Text(mode.rawValue).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 80)
+                }
+            }
+            
+            let data = providerDisplayList
+            
+            if data.isEmpty {
+                emptyChartPlaceholder("暂无数据")
+            } else {
+                VStack(spacing: 8) {
+                    // Content based on View Mode
+                    if viewMode == .donut {
+                        HStack(spacing: 12) {
+                            donutChartView(data: data)
+                                .frame(width: 110, height: 110)
+                                .padding(.leading, 4)
+                            
+                            ScrollView {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    ForEach(data) { item in
+                                        legendRow(item: item)
+                                    }
+                                }
+                                .padding(.trailing, 2)
+                            }
+                        }
+                        .frame(height: 110)
+                    } else {
+                        ScrollView {
+                            VStack(spacing: 5) {
+                                ForEach(data) { item in
+                                    providerBarRow(item: item)
+                                }
+                            }
+                            .padding(.trailing, 4)
+                        }
+                        .frame(height: 110)
+                    }
+                    
+                    // Spotlight Details Box (Shows details of selected provider, or the top provider by default)
+                    let activeProvider = selectedProvider ?? data.first?.provider
+                    if let activeProvider, let activeData = data.first(where: { $0.provider == activeProvider }) {
+                        spotlightDetailsBox(item: activeData)
+                    }
+                }
+            }
+        }
+        .frame(minWidth: 320)
         .cardStyle()
     }
 
-    private func providerLegend(data: [ProviderChartData], total: Int) -> some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 130), spacing: 6)], alignment: .leading, spacing: 6) {
-            ForEach(data) { item in
-                HStack(spacing: 5) {
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(item.provider.brandColor)
-                        .frame(width: 10, height: 10)
-                    Text(item.provider.displayName)
-                        .font(.caption2)
-                        .lineLimit(1)
-                    Spacer(minLength: 0)
-                    Text("\(item.count)")
-                        .font(.caption2.monospacedDigit())
-                        .fontWeight(.medium)
-                    Text(percentText(item.count, total: total))
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .frame(width: 32, alignment: .trailing)
+    private func donutChartView(data: [ProviderDisplayData]) -> some View {
+        Chart(data) { item in
+            SectorMark(
+                angle: .value("数值", item.displayValue),
+                innerRadius: .ratio(0.55),
+                angularInset: 1.5
+            )
+            .foregroundStyle(item.provider.brandColor)
+            .cornerRadius(4)
+            .opacity(selectedProvider == nil || selectedProvider == item.provider ? 1.0 : 0.35)
+        }
+        .chartLegend(.hidden)
+    }
+
+    private func legendRow(item: ProviderDisplayData) -> some View {
+        let isSelected = selectedProvider == item.provider
+        return Button(action: {
+            withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) {
+                if selectedProvider == item.provider {
+                    selectedProvider = nil
+                } else {
+                    selectedProvider = item.provider
                 }
             }
+        }) {
+            HStack(spacing: 4) {
+                Circle()
+                    .fill(item.provider.brandColor)
+                    .frame(width: 6, height: 6)
+                
+                Text(item.provider.displayName)
+                    .font(.system(size: 10))
+                    .lineLimit(1)
+                    .foregroundStyle(isSelected ? .primary : .secondary)
+                    .fontWeight(isSelected ? .semibold : .regular)
+                
+                Spacer(minLength: 4)
+                
+                Text(metricText(item: item))
+                    .font(.system(size: 9).monospacedDigit())
+                    .foregroundStyle(isSelected ? .primary : .secondary)
+                
+                Text(String(format: "%.0f%%", item.percentage * 100.0))
+                    .font(.system(size: 9).monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .frame(width: 26, alignment: .trailing)
+            }
+            .padding(.horizontal, 4)
+            .padding(.vertical, 2)
+            .background(
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(isSelected ? item.provider.brandColor.opacity(0.12) : Color.clear)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func metricText(item: ProviderDisplayData) -> String {
+        if metricType == .calls {
+            return "\(item.count)次"
+        } else {
+            return item.cost.formattedCurrency
         }
     }
 
-    private func percentText(_ count: Int, total: Int) -> String {
-        guard total > 0 else { return "0%" }
-        return String(format: "%.0f%%", Double(count) / Double(total) * 100)
+    private func providerBarRow(item: ProviderDisplayData) -> some View {
+        let isSelected = selectedProvider == item.provider
+        return Button(action: {
+            withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) {
+                if selectedProvider == item.provider {
+                    selectedProvider = nil
+                } else {
+                    selectedProvider = item.provider
+                }
+            }
+        }) {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 4) {
+                    HStack(spacing: 4) {
+                        Image(systemName: item.provider.iconName)
+                            .font(.system(size: 10))
+                            .foregroundStyle(item.provider.brandColor)
+                        
+                        Text(item.provider.displayName)
+                            .font(.system(size: 10, weight: .medium))
+                    }
+                    
+                    Spacer()
+                    
+                    Text(metricText(item: item))
+                        .font(.system(size: 9).monospacedDigit())
+                    
+                    Text(String(format: "%.1f%%", item.percentage * 100.0))
+                        .font(.system(size: 9).monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                
+                GeometryReader { geo in
+                    let fillWidth = max(geo.size.width * CGFloat(item.percentage), 6)
+                    ZStack(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(Color.primary.opacity(0.04))
+                        
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(item.provider.brandColor.gradient)
+                            .frame(width: fillWidth)
+                    }
+                }
+                .frame(height: 4)
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .background(
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(isSelected ? item.provider.brandColor.opacity(0.1) : Color.primary.opacity(0.02))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 4)
+                    .strokeBorder(item.provider.brandColor.opacity(isSelected ? 0.35 : 0), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func spotlightDetailsBox(item: ProviderDisplayData) -> some View {
+        VStack(spacing: 6) {
+            HStack {
+                HStack(spacing: 5) {
+                    Image(systemName: item.provider.iconName)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.white)
+                        .frame(width: 18, height: 18)
+                        .background(item.provider.brandColor)
+                        .clipShape(Circle())
+                    
+                    Text(item.provider.displayName)
+                        .font(.system(size: 11, weight: .semibold))
+                }
+                
+                Spacer()
+                
+                Button(action: {
+                    NotificationCenter.default.post(
+                        name: Notification.Name("NavigateToRateLimits"),
+                        object: item.provider
+                    )
+                }) {
+                    HStack(spacing: 2) {
+                        Text("速率与配额")
+                        Image(systemName: "chevron.right")
+                    }
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(.blue)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(Color.blue.opacity(0.08))
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+            
+            HStack(spacing: 6) {
+                spotlightMetricTile(
+                    title: "调用次数",
+                    value: "\(item.count)",
+                    subValue: String(format: "%.1f%% 占比", item.percentage * 100.0),
+                    color: item.provider.brandColor
+                )
+                
+                spotlightMetricTile(
+                    title: "估算费用",
+                    value: item.cost.formattedCurrency,
+                    subValue: item.count > 0 ? "\((item.cost / Double(item.count)).formattedCurrency)/次" : "$0.00/次",
+                    color: .successGreen
+                )
+                
+                spotlightMetricTile(
+                    title: "总 Token",
+                    value: item.tokens.formattedCompact,
+                    subValue: item.count > 0 ? "\(item.tokens / item.count) avg" : "0 avg",
+                    color: .accentGradientStart
+                )
+                
+                spotlightMetricTile(
+                    title: "平均耗时",
+                    value: item.avgDuration.formattedDuration,
+                    subValue: "响应耗时",
+                    color: .warningOrange
+                )
+            }
+        }
+        .padding(8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.primary.opacity(0.02))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(item.provider.brandColor.opacity(0.18), lineWidth: 1)
+        )
+    }
+
+    private func spotlightMetricTile(title: String, value: String, subValue: String, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(title)
+                .font(.system(size: 8))
+                .foregroundStyle(.secondary)
+            
+            Text(value)
+                .font(.system(size: 10, weight: .bold, design: .rounded))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+            
+            Text(subValue)
+                .font(.system(size: 8))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 4)
+        .padding(.vertical, 3)
+        .background(
+            RoundedRectangle(cornerRadius: 4)
+                .fill(color.opacity(0.05))
+        )
     }
 
     // MARK: - Model Bar Chart
@@ -463,6 +760,17 @@ struct ProviderChartData: Identifiable {
     let id = UUID()
     let provider: LLMProvider
     let count: Int
+}
+
+struct ProviderDisplayData: Identifiable {
+    let id = UUID()
+    let provider: LLMProvider
+    let count: Int
+    let tokens: Int
+    let cost: Double
+    let avgDuration: Double
+    let displayValue: Double
+    let percentage: Double
 }
 
 struct ModelChartData: Identifiable {
