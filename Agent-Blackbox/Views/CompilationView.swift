@@ -117,7 +117,7 @@ struct CompilationView: View {
             }
             .buttonStyle(.plain)
             .padding()
-            .popover(isPresented: $showNewSheet, arrowEdge: .trailing) {
+            .sheet(isPresented: $showNewSheet) {
                 newCompilationForm
             }
         }
