@@ -252,6 +252,12 @@ final class ProxyServerService: ObservableObject {
                 client = "pi"
             } else if ua.contains("antigravity") {
                 client = "antigravity"
+            } else if ua.contains("python") || ua.contains("requests") || ua.contains("aiohttp") || ua.contains("urllib") {
+                client = "python"
+            } else if ua.contains("node") || ua.contains("axios") || ua.contains("node-fetch") {
+                client = "node"
+            } else if ua.contains("curl") {
+                client = "curl"
             }
         } else if let referer = headers["referer"]?.lowercased() {
             if referer.contains("vscode-extension") {

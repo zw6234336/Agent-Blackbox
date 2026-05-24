@@ -66,6 +66,7 @@ struct AgentBlackboxApp: App {
             SettingsView()
                 .environmentObject(configService)
                 .environmentObject(database)
+                .environmentObject(proxyServer)
         }
         
         MenuBarExtra("Agent Blackbox", systemImage: "bolt.shield.fill") {
