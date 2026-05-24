@@ -9,6 +9,7 @@ struct DashboardStats {
     var errorCount: Int = 0
     var avgResponseTime: Double = 0.0
     var callsByProvider: [LLMProvider: Int] = [:]
+    var providerStats: [LLMProvider: ProviderStat] = [:]
     var callsByModel: [String: Int] = [:]
     var tokensByDay: [DayTokens] = []
     var recentLogs: [ParsedLog] = []
@@ -33,12 +34,13 @@ struct DayTokens: Identifiable, Hashable {
     var totalTokens: Int { promptTokens + completionTokens }
 }
 
-struct ProviderStat: Identifiable {
+struct ProviderStat: Identifiable, Hashable {
     let id = UUID()
     let provider: LLMProvider
     let count: Int
     let tokens: Int
     let cost: Double
+    let avgDuration: Double
 }
 
 struct ModelStat: Identifiable {

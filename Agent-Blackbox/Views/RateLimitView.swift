@@ -1,4 +1,15 @@
 import SwiftUI
+import Charts
+
+// MARK: - Tab Enum
+
+/// 选中的 Tab：Overview 或某个具体 Provider
+enum RateLimitTab: Hashable {
+    case overview
+    case provider(LLMProvider)
+}
+
+// MARK: - Main View
 
 struct RateLimitView: View {
     @EnvironmentObject var tracker: RateLimitTrackerService
@@ -8,6 +19,7 @@ struct RateLimitView: View {
 
     @State private var editingProvider: LLMProvider? = nil
     @State private var showingApplyConfirm = false
+    @State private var selectedTab: RateLimitTab = .overview
 
     private var riskCount: Int {
         tracker.snapshots.filter { $0.overallSeverity != .normal }.count
@@ -18,33 +30,38 @@ struct RateLimitView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                header
+        VStack(spacing: 0) {
+            // ── Provider Tab Bar ──────────────────────────────────
+            providerTabBar
 
-                overviewStrip
+            Divider()
+                .opacity(0.5)
 
-                detectedPlansBanner
-
-                if let g = tracker.globalSnapshot, !g.windows.isEmpty {
-                    GlobalSummaryCard(snapshot: g)
-                }
-
-                if tracker.snapshots.isEmpty {
-                    emptyState
-                } else {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 460), spacing: 16)], spacing: 16) {
-                        ForEach(tracker.snapshots) { snap in
-                            ProviderUsageCard(snapshot: snap) {
-                                editingProvider = snap.provider
-                            }
+            // ── Content ──────────────────────────────────────────
+            ScrollView {
+                VStack(spacing: 0) {
+                    switch selectedTab {
+                    case .overview:
+                        overviewContent
+                            .transition(.opacity.combined(with: .move(edge: .leading)))
+                    case .provider(let p):
+                        if let snap = tracker.snapshots.first(where: { $0.provider == p }) {
+                            ProviderDetailView(
+                                snapshot: snap,
+                                detectedPlan: planDetector.detectedPlans[p],
+                                onEdit: { editingProvider = p }
+                            )
+                            .id(p) // force rebuild on tab switch
+                            .transition(.opacity.combined(with: .move(edge: .trailing)))
+                        } else {
+                            emptyProviderState(p)
                         }
                     }
                 }
+                .animation(.easeInOut(duration: 0.25), value: selectedTab)
             }
-            .padding(20)
+            .background(Color.dashboardBackground)
         }
-        .background(Color.dashboardBackground)
         .onAppear {
             tracker.bind(database: database, config: configService)
             tracker.start()
@@ -60,302 +77,569 @@ struct RateLimitView: View {
         }
     }
 
-    private var header: some View {
-        HStack(alignment: .top, spacing: 16) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("速率与配额")
-                    .font(.system(size: 28, weight: .bold, design: .rounded))
-                Text("RPM、TPM、预算和并发集中展示，快速判断哪个 Provider 接近上限。")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
+    // MARK: - Provider Tab Bar
 
-            Spacer()
+    private var providerTabBar: some View {
+        VStack(spacing: 0) {
+            // Main tab row
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 0) {
+                    // Overview tab
+                    tabButton(
+                        icon: "rectangle.grid.2x2",
+                        label: "Overview",
+                        isSelected: selectedTab == .overview,
+                        color: .accentGradientStart
+                    ) {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            selectedTab = .overview
+                        }
+                    }
 
-            VStack(alignment: .trailing, spacing: 10) {
-                HStack(spacing: 6) {
-                    Circle().fill(Color.successGreen).frame(width: 6, height: 6)
-                    Text("更新于 \(tracker.updatedAt.formattedRelative)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    // Provider tabs
+                    ForEach(tracker.snapshots) { snap in
+                        tabButton(
+                            icon: snap.provider.iconName,
+                            label: snap.provider.shortName,
+                            isSelected: selectedTab == .provider(snap.provider),
+                            color: snap.provider.brandColor,
+                            severity: snap.overallSeverity
+                        ) {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                selectedTab = .provider(snap.provider)
+                            }
+                        }
+                    }
                 }
+                .padding(.horizontal, 12)
+            }
+            .frame(height: 64)
+            .background(.ultraThinMaterial)
+        }
+    }
+
+    private func tabButton(
+        icon: String,
+        label: String,
+        isSelected: Bool,
+        color: Color,
+        severity: RateWindow.Severity = .normal,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            VStack(spacing: 4) {
+                ZStack(alignment: .topTrailing) {
+                    Image(systemName: icon)
+                        .font(.system(size: 18))
+                        .foregroundStyle(isSelected ? color : .secondary)
+                        .frame(width: 28, height: 28)
+
+                    // Risk dot
+                    if severity != .normal {
+                        Circle()
+                            .fill(severity == .critical ? Color.errorRed : Color.warningOrange)
+                            .frame(width: 6, height: 6)
+                            .offset(x: 2, y: -2)
+                    }
+                }
+
+                Text(label)
+                    .font(.system(size: 10, weight: isSelected ? .semibold : .regular))
+                    .foregroundStyle(isSelected ? .primary : .secondary)
+                    .lineLimit(1)
+            }
+            .frame(width: 64, height: 52)
+            .overlay(alignment: .bottom) {
+                if isSelected {
+                    RoundedRectangle(cornerRadius: 1.5)
+                        .fill(color)
+                        .frame(height: 3)
+                        .padding(.horizontal, 12)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Overview Content
+
+    private var overviewContent: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            // Header row
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("速率与配额")
+                        .font(.system(size: 22, weight: .bold, design: .rounded))
+                    HStack(spacing: 6) {
+                        Circle().fill(Color.successGreen).frame(width: 6, height: 6)
+                        Text("更新于 \(tracker.updatedAt.formattedRelative)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Spacer()
 
                 HStack(spacing: 8) {
                     Button {
                         Task { await planDetector.detectAll() }
                     } label: {
                         if planDetector.isDetecting {
-                            HStack(spacing: 6) {
-                                ProgressView().scaleEffect(0.75)
+                            HStack(spacing: 4) {
+                                ProgressView().scaleEffect(0.65)
                                 Text("检测中...")
+                                    .font(.caption)
                             }
                         } else {
                             Label("检测套餐", systemImage: "person.badge.key.fill")
+                                .font(.caption)
                         }
                     }
                     .buttonStyle(.bordered)
+                    .controlSize(.small)
                     .disabled(planDetector.isDetecting)
-                    .help("从本地凭证（GitHub CLI、Cursor、Claude Desktop）自动检测当前套餐授权")
 
                     Button {
                         tracker.refresh()
                     } label: {
-                        Label("刷新", systemImage: "arrow.clockwise")
+                        Image(systemName: "arrow.clockwise")
+                            .font(.caption)
                     }
                     .buttonStyle(.bordered)
+                    .controlSize(.small)
                 }
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 16)
+
+            // Overview metric strip
+            overviewMetricStrip
+                .padding(.horizontal, 20)
+
+            // Detected plans banner
+            detectedPlansBanner
+                .padding(.horizontal, 20)
+
+            // Provider list (sorted by severity then usage)
+            if tracker.snapshots.isEmpty {
+                emptyState
+                    .padding(.horizontal, 20)
+            } else {
+                VStack(spacing: 1) {
+                    ForEach(sortedSnapshots) { snap in
+                        ProviderRowCard(snapshot: snap,
+                                       detectedPlan: planDetector.detectedPlans[snap.provider]) {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                selectedTab = .provider(snap.provider)
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 20)
             }
         }
     }
 
-    private var overviewStrip: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 12)], spacing: 12) {
-            overviewCard(
-                title: "Provider",
+    /// Sorted: critical first, then warning, then normal; within same severity by calls desc
+    private var sortedSnapshots: [ProviderUsageSnapshot] {
+        tracker.snapshots.sorted { a, b in
+            let aSev = severityOrder(a.overallSeverity)
+            let bSev = severityOrder(b.overallSeverity)
+            if aSev != bSev { return aSev > bSev }
+            return a.totalCalls1h > b.totalCalls1h
+        }
+    }
+
+    private func severityOrder(_ s: RateWindow.Severity) -> Int {
+        switch s {
+        case .critical: return 2
+        case .warning: return 1
+        case .normal: return 0
+        }
+    }
+
+    // MARK: - Overview Metric Strip
+
+    private var overviewMetricStrip: some View {
+        HStack(spacing: 10) {
+            compactMetric(
                 value: "\(tracker.snapshots.count)",
-                subtitle: "正在统计",
+                label: "Provider",
                 icon: "shippingbox.fill",
                 color: .accentGradientStart
             )
-            overviewCard(
-                title: "风险项",
+            compactMetric(
                 value: "\(riskCount)",
-                subtitle: "接近或达到上限",
+                label: "风险项",
                 icon: riskCount > 0 ? "exclamationmark.triangle.fill" : "checkmark.seal.fill",
                 color: riskCount > 0 ? .warningOrange : .successGreen
             )
-            overviewCard(
-                title: "限额窗口",
+            compactMetric(
                 value: "\(configuredWindowCount)",
-                subtitle: "已配置总数",
+                label: "限额窗口",
                 icon: "slider.horizontal.3",
                 color: .infoBlue
             )
-            overviewCard(
-                title: "全局并发",
+            compactMetric(
                 value: "\(tracker.globalSnapshot?.concurrency.currentInFlight ?? 0)",
-                subtitle: "当前进行中",
+                label: "并发",
                 icon: "arrow.triangle.branch",
                 color: .accentGradientEnd
             )
         }
     }
 
-    private func overviewCard(title: String, value: String, subtitle: String, icon: String, color: Color) -> some View {
-        HStack(spacing: 12) {
+    private func compactMetric(value: String, label: String, icon: String, color: Color) -> some View {
+        HStack(spacing: 8) {
             Image(systemName: icon)
-                .font(.title3)
+                .font(.caption)
                 .foregroundStyle(color)
-                .frame(width: 28)
-
-            VStack(alignment: .leading, spacing: 3) {
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 1) {
                 Text(value)
-                    .font(.system(size: 22, weight: .bold, design: .rounded))
-                Text(title)
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                Text(subtitle)
-                    .font(.caption2)
+                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                Text(label)
+                    .font(.system(size: 10))
                     .foregroundStyle(.secondary)
             }
             Spacer()
         }
-        .cardStyle()
+        .padding(10)
+        .background(Color.primary.opacity(0.04))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     // MARK: - Detected Plans Banner
 
     @ViewBuilder
     private var detectedPlansBanner: some View {
-        if !planDetector.detectedPlans.isEmpty || !planDetector.statusMessage.isEmpty {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 8) {
-                    Image(systemName: planDetector.detectedPlans.isEmpty ? "info.circle" : "checkmark.seal.fill")
-                        .foregroundStyle(planDetector.detectedPlans.isEmpty ? Color.secondary : Color.successGreen)
-                    Text(planDetector.detectedPlans.isEmpty ? "套餐检测" : "已检测到 \(planDetector.detectedPlans.count) 个本地套餐")
-                        .font(.subheadline.bold())
+        if !planDetector.detectedPlans.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.seal.fill")
+                        .foregroundStyle(Color.successGreen)
+                        .font(.caption)
+                    Text("已检测 \(planDetector.detectedPlans.count) 个套餐")
+                        .font(.caption.bold())
                     Spacer()
-                    if !planDetector.detectedPlans.isEmpty {
-                        Button {
-                            planDetector.applyToConfig(configService)
-                            tracker.refresh()
-                            showingApplyConfirm = true
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { showingApplyConfirm = false }
-                        } label: {
-                            Label(showingApplyConfirm ? "已应用 ✓" : "应用到配置", systemImage: showingApplyConfirm ? "checkmark" : "arrow.down.circle")
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(showingApplyConfirm)
+                    Button {
+                        planDetector.applyToConfig(configService)
+                        tracker.refresh()
+                        showingApplyConfirm = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { showingApplyConfirm = false }
+                    } label: {
+                        Text(showingApplyConfirm ? "已应用 ✓" : "应用到配置")
+                            .font(.caption)
                     }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.mini)
+                    .disabled(showingApplyConfirm)
                 }
 
                 if !planDetector.statusMessage.isEmpty {
                     Text(planDetector.statusMessage)
-                        .font(.caption)
+                        .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
 
-                if !planDetector.detectedPlans.isEmpty {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 200), spacing: 10)], spacing: 10) {
-                        ForEach(Array(planDetector.detectedPlans.values)) { plan in
-                            HStack(spacing: 10) {
-                                Image(systemName: plan.provider.iconName)
-                                    .foregroundStyle(plan.provider.brandColor)
-                                    .frame(width: 20)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(plan.planName)
-                                        .font(.caption.bold())
-                                    Text(plan.source)
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                            }
-                            .padding(10)
-                            .background(Color.primary.opacity(0.04))
-                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                // Compact plan pills
+                FlowLayout(spacing: 6) {
+                    ForEach(Array(planDetector.detectedPlans.values)) { plan in
+                        HStack(spacing: 4) {
+                            Image(systemName: plan.provider.iconName)
+                                .font(.system(size: 9))
+                                .foregroundStyle(plan.provider.brandColor)
+                            Text(plan.planName)
+                                .font(.system(size: 10, weight: .medium))
                         }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(plan.provider.brandColor.opacity(0.1))
+                        .clipShape(Capsule())
                     }
                 }
             }
-            .cardStyle()
+            .padding(12)
+            .background(Color.successGreen.opacity(0.06))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(Color.successGreen.opacity(0.15), lineWidth: 1)
+            )
         }
     }
 
+    // MARK: - Empty States
+
     private var emptyState: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 10) {
             Image(systemName: "gauge.with.dots.needle.bottom.50percent")
-                .font(.system(size: 48))
+                .font(.system(size: 36))
                 .foregroundStyle(.tertiary)
             Text("暂无可统计的调用")
-                .font(.headline)
+                .font(.subheadline)
                 .foregroundStyle(.secondary)
-            Text("启动监控并捕获到日志后，这里会显示每个 Provider 的实时速率与配额。")
+            Text("启动监控后，这里会显示实时速率与配额。")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
         }
-        .frame(maxWidth: .infinity, minHeight: 200)
+        .frame(maxWidth: .infinity, minHeight: 160)
         .cardStyle()
+    }
+
+    private func emptyProviderState(_ provider: LLMProvider) -> some View {
+        VStack(spacing: 10) {
+            Image(systemName: provider.iconName)
+                .font(.system(size: 36))
+                .foregroundStyle(provider.brandColor.opacity(0.4))
+            Text("\(provider.displayName) 暂无数据")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Text("捕获到该 Provider 的日志后，数据将在此显示。")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity, minHeight: 200)
+        .padding(20)
     }
 }
 
-// MARK: - Global Summary
+// MARK: - Provider Row Card (Overview List)
 
-private struct GlobalSummaryCard: View {
+private struct ProviderRowCard: View {
     let snapshot: ProviderUsageSnapshot
+    let detectedPlan: DetectedPlan?
+    let onTap: () -> Void
+
+    @State private var isHovered = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Image(systemName: "globe")
-                Text("全局汇总")
-                    .font(.headline)
+        Button(action: onTap) {
+            HStack(spacing: 12) {
+                // Provider icon
+                Image(systemName: snapshot.provider.iconName)
+                    .font(.title3)
+                    .foregroundStyle(snapshot.provider.brandColor)
+                    .frame(width: 32)
+
+                // Name + plan
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(snapshot.provider.displayName)
+                            .font(.subheadline.bold())
+                            .foregroundStyle(.primary)
+                        if let plan = detectedPlan {
+                            Text(plan.planName)
+                                .font(.system(size: 9, weight: .medium))
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 2)
+                                .background(Color.accentColor.opacity(0.1))
+                                .foregroundStyle(Color.accentColor)
+                                .clipShape(Capsule())
+                        }
+                    }
+                    Text("1h: \(snapshot.totalCalls1h) 调用 · \(snapshot.totalTokens1h.formattedCompact) tok")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+
                 Spacer()
-                SeverityBadge(severity: snapshot.overallSeverity)
-            }
 
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 12)], spacing: 12) {
-                summaryItem(title: "1小时请求", value: "\(snapshot.totalCalls1h)", icon: "paperplane.fill")
-                summaryItem(title: "1小时 Token", value: snapshot.totalTokens1h.formattedCompact, icon: "textformat.abc")
-                summaryItem(title: "今日费用", value: snapshot.totalCost24h.formattedCurrency, icon: "dollarsign.circle.fill")
-                summaryItem(title: "当前并发", value: "\(snapshot.concurrency.currentInFlight)", icon: "arrow.triangle.branch")
-                summaryItem(title: "1分钟峰值并发", value: "\(snapshot.concurrency.peakLastMinute)", icon: "waveform.path.ecg")
-                summaryItem(title: "1小时峰值并发", value: "\(snapshot.concurrency.peakLastHour)", icon: "chart.line.uptrend.xyaxis")
-            }
+                // Primary window mini bar
+                if let primary = snapshot.windows.first {
+                    HStack(spacing: 8) {
+                        // Mini progress indicator
+                        MiniProgressRing(percent: primary.usedPercent, color: progressColor(primary.severity))
+                            .frame(width: 28, height: 28)
 
-            ForEach(snapshot.windows) { w in
-                RateWindowBar(window: w, pace: nil)
+                        VStack(alignment: .trailing, spacing: 1) {
+                            Text("\(String(format: "%.0f", primary.usedPercent))%")
+                                .font(.system(size: 13, weight: .bold, design: .rounded))
+                                .foregroundStyle(progressColor(primary.severity))
+                            Text(primary.kind.displayName)
+                                .font(.system(size: 9))
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                }
+
+                // Severity + chevron
+                SeverityDot(severity: snapshot.overallSeverity)
+
+                Image(systemName: "chevron.right")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(isHovered ? Color.primary.opacity(0.06) : Color.primary.opacity(0.03))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(Color.primary.opacity(isHovered ? 0.08 : 0), lineWidth: 1)
+            )
         }
-        .cardStyle()
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
     }
 
-    private func summaryItem(title: String, value: String, icon: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Image(systemName: icon)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.system(size: 18, weight: .semibold, design: .rounded))
-            Text(title)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
+    private func progressColor(_ severity: RateWindow.Severity) -> Color {
+        switch severity {
+        case .critical: return .errorRed
+        case .warning: return .warningOrange
+        case .normal: return .successGreen
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(10)
-        .background(Color.primary.opacity(0.04))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 }
 
-// MARK: - Provider Card
+// MARK: - Mini Progress Ring
 
-private struct ProviderUsageCard: View {
-    @EnvironmentObject var planDetector: PlanDetectionService
+private struct MiniProgressRing: View {
+    let percent: Double
+    let color: Color
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(color.opacity(0.15), lineWidth: 3)
+            Circle()
+                .trim(from: 0, to: min(percent / 100, 1.0))
+                .stroke(color.gradient, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+        }
+    }
+}
+
+// MARK: - Severity Dot
+
+private struct SeverityDot: View {
+    let severity: RateWindow.Severity
+
+    var body: some View {
+        Circle()
+            .fill(color)
+            .frame(width: 8, height: 8)
+    }
+
+    private var color: Color {
+        switch severity {
+        case .critical: return .errorRed
+        case .warning: return .warningOrange
+        case .normal: return .successGreen
+        }
+    }
+}
+
+// MARK: - Provider Detail View (Single Provider Page)
+
+private struct ProviderDetailView: View {
+    @EnvironmentObject var tracker: RateLimitTrackerService
+    @EnvironmentObject var database: DatabaseService
     let snapshot: ProviderUsageSnapshot
+    let detectedPlan: DetectedPlan?
     let onEdit: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Image(systemName: snapshot.provider.iconName)
-                    .foregroundStyle(snapshot.provider.brandColor)
-                Text(snapshot.provider.displayName)
-                    .font(.headline)
-                if let plan = planDetector.detectedPlans[snapshot.provider] {
-                    DetectedPlanBadge(planName: plan.planName, source: plan.source)
+        VStack(alignment: .leading, spacing: 0) {
+            // ── Header ─────────────────────────
+            providerHeader
+                .padding(.horizontal, 20)
+                .padding(.top, 16)
+                .padding(.bottom, 12)
+
+            Divider().padding(.horizontal, 20).opacity(0.4)
+
+            // ── Rate Windows (Progress Bars) ───
+            if !snapshot.windows.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(snapshot.windows) { window in
+                        CompactRateBar(
+                            window: window,
+                            pace: snapshot.pace.flatMap { window.kind == primaryKind ? $0 : nil }
+                        )
+                    }
                 }
-                Spacer()
-                SeverityBadge(severity: snapshot.overallSeverity)
-                Button(action: onEdit) {
-                    Image(systemName: "slider.horizontal.3")
-                }
-                .buttonStyle(.borderless)
-                .help("编辑此 Provider 的限额")
-            }
-
-            VStack(alignment: .leading, spacing: 10) {
-                Text("并发概览")
-                    .font(.caption)
-                    .fontWeight(.medium)
-                    .foregroundStyle(.secondary)
-
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 10)], spacing: 10) {
-                    concurrencyChip("当前并发", value: "\(snapshot.concurrency.currentInFlight)", systemImage: "arrow.triangle.branch")
-                    concurrencyChip("1m 峰值", value: "\(snapshot.concurrency.peakLastMinute)", systemImage: "waveform.path.ecg")
-                    concurrencyChip("1h 峰值", value: "\(snapshot.concurrency.peakLastHour)", systemImage: "chart.line.uptrend.xyaxis")
-                    concurrencyChip("平均时长", value: snapshot.concurrency.avgDurationSeconds.formattedDuration, systemImage: "clock")
-                }
-            }
-
-            Divider()
-
-            if snapshot.windows.isEmpty {
-                Text("此 Provider 未配置任何限额")
-                    .font(.caption).foregroundStyle(.secondary)
+                .padding(.horizontal, 20)
+                .padding(.top, 12)
             } else {
                 HStack {
-                    Text("限额进度")
+                    Image(systemName: "info.circle")
                         .font(.caption)
-                        .fontWeight(.medium)
                         .foregroundStyle(.secondary)
-                    Spacer()
-                    Text("共 \(snapshot.windows.count) 项")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                    Text("此 Provider 未配置限额")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
-
-                ForEach(snapshot.windows) { window in
-                    RateWindowBar(
-                        window: window,
-                        pace: snapshot.pace.flatMap { window.kind == primaryKind ? $0 : nil }
-                    )
-                }
+                .padding(.horizontal, 20)
+                .padding(.top, 12)
             }
+
+            // ── Stats Grid ─────────────────────
+            statsGrid
+                .padding(.horizontal, 20)
+                .padding(.top, 16)
+
+            Divider().padding(.horizontal, 20).padding(.top, 16).opacity(0.4)
+
+            // ── Concurrency ────────────────────
+            concurrencySection
+                .padding(.horizontal, 20)
+                .padding(.top, 12)
+
+            Divider().padding(.horizontal, 20).padding(.top, 12).opacity(0.4)
+
+            // ── Hourly Usage Chart ─────────────
+            hourlyUsageSection
+                .padding(.horizontal, 20)
+                .padding(.top, 12)
+
+            Divider().padding(.horizontal, 20).padding(.top, 12).opacity(0.4)
+
+            // ── Quick Actions ──────────────────
+            quickActions
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
+                .padding(.bottom, 20)
         }
-        .cardStyle()
+    }
+
+    // MARK: - Provider Header
+
+    private var providerHeader: some View {
+        HStack(spacing: 12) {
+            Image(systemName: snapshot.provider.iconName)
+                .font(.system(size: 20))
+                .foregroundStyle(snapshot.provider.brandColor)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(snapshot.provider.displayName)
+                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                    if let plan = detectedPlan {
+                        DetectedPlanBadge(planName: plan.planName, source: plan.source)
+                    }
+                }
+                Text("更新于 \(snapshot.updatedAt.formattedRelative)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            SeverityBadge(severity: snapshot.overallSeverity)
+
+            Button(action: onEdit) {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.caption)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .help("编辑限额")
+        }
     }
 
     /// 与 RateLimitTrackerService 内一致的主窗口优先级
@@ -367,82 +651,249 @@ private struct ProviderUsageCard: View {
         return snapshot.windows.first?.kind
     }
 
-    private func concurrencyChip(_ title: String, value: String, systemImage: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 4) {
-                Image(systemName: systemImage).font(.caption2).foregroundStyle(.secondary)
-                Text(title).font(.caption2).foregroundStyle(.secondary)
+    // MARK: - Stats Grid (2x2 like CodexBar)
+
+    private var statsGrid: some View {
+        let cols = [GridItem(.flexible()), GridItem(.flexible())]
+        return LazyVGrid(columns: cols, spacing: 10) {
+            statCell(
+                label: "24h tokens",
+                value: snapshot.totalTokens1h.formattedCompact,
+                subValue: nil
+            )
+            statCell(
+                label: "Latest hour",
+                value: "\(snapshot.totalCalls1h)",
+                subValue: "调用"
+            )
+            statCell(
+                label: "Peak hour",
+                value: "\(snapshot.concurrency.peakLastHour)",
+                subValue: "并发"
+            )
+            statCell(
+                label: "Today cost",
+                value: snapshot.totalCost24h.formattedCurrency,
+                subValue: nil
+            )
+        }
+    }
+
+    private func statCell(label: String, value: String, subValue: String?) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label)
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+                .textCase(.none)
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(value)
+                    .font(.system(size: 20, weight: .bold, design: .rounded))
+                if let sub = subValue {
+                    Text(sub)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
             }
-            Text(value).font(.system(size: 14, weight: .semibold, design: .rounded))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(10)
-        .background(Color.primary.opacity(0.04))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .background(Color.primary.opacity(0.03))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    // MARK: - Concurrency Section
+
+    private var concurrencySection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("并发概览")
+                .font(.caption)
+                .fontWeight(.medium)
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 10) {
+                concurrencyPill("当前", value: "\(snapshot.concurrency.currentInFlight)", icon: "arrow.triangle.branch")
+                concurrencyPill("1m峰值", value: "\(snapshot.concurrency.peakLastMinute)", icon: "waveform.path.ecg")
+                concurrencyPill("1h峰值", value: "\(snapshot.concurrency.peakLastHour)", icon: "chart.line.uptrend.xyaxis")
+                concurrencyPill("平均", value: snapshot.concurrency.avgDurationSeconds.formattedDuration, icon: "clock")
+            }
+        }
+    }
+
+    private func concurrencyPill(_ title: String, value: String, icon: String) -> some View {
+        VStack(spacing: 3) {
+            HStack(spacing: 3) {
+                Image(systemName: icon)
+                    .font(.system(size: 8))
+                    .foregroundStyle(.tertiary)
+                Text(title)
+                    .font(.system(size: 9))
+                    .foregroundStyle(.tertiary)
+            }
+            Text(value)
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 8)
+        .background(Color.primary.opacity(0.03))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    // MARK: - Hourly Usage Mini Chart
+
+    private var hourlyUsageSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Hourly Usage")
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.tertiary)
+            }
+
+            // Mini bar chart using hourly data
+            HourlyMiniChart(provider: snapshot.provider, database: database)
+                .frame(height: 48)
+        }
+    }
+
+    // MARK: - Quick Actions
+
+    private var quickActions: some View {
+        VStack(spacing: 0) {
+            actionRow(icon: "chart.bar.fill", label: "Usage Dashboard", color: .infoBlue) {}
+            Divider().padding(.leading, 32).opacity(0.3)
+            actionRow(icon: "arrow.clockwise", label: "Refresh", color: .primary, shortcut: "⌘R") {
+                tracker.refresh()
+            }
+            Divider().padding(.leading, 32).opacity(0.3)
+            actionRow(icon: "gearshape", label: "Settings…", color: .primary, shortcut: "⌘,") {
+                onEdit()
+            }
+        }
+    }
+
+    private func actionRow(
+        icon: String,
+        label: String,
+        color: Color,
+        shortcut: String? = nil,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: icon)
+                    .font(.caption)
+                    .foregroundStyle(color)
+                    .frame(width: 18)
+                Text(label)
+                    .font(.subheadline)
+                Spacer()
+                if let key = shortcut {
+                    Text(key)
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 
-// MARK: - RateWindow Progress Bar (借鉴 CodexBar 的 used% + 节奏 tick)
+// MARK: - Compact Rate Bar (CodexBar style)
 
-struct RateWindowBar: View {
+struct CompactRateBar: View {
     let window: RateWindow
     let pace: UsagePace?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(window.kind.displayName)
+        VStack(alignment: .leading, spacing: 6) {
+            // Title row
+            HStack {
+                Text(window.kind.displayName)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+
+                Spacer()
+
+                if let resetDesc = window.resetDescription {
+                    Text(resetDesc)
                         .font(.caption)
-                        .fontWeight(.medium)
-                    Text(formatUsed())
-                        .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
-                Spacer()
-                Text(String(format: "%.0f%%", window.usedPercent))
-                    .font(.caption.monospacedDigit())
-                    .fontWeight(.bold)
-                    .foregroundStyle(color)
             }
 
+            // Progress bar (CodexBar style — thicker with gradient)
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 7)
+                    // Background track
+                    RoundedRectangle(cornerRadius: 4)
                         .fill(Color.primary.opacity(0.08))
-                    RoundedRectangle(cornerRadius: 7)
-                        .fill(color.gradient)
+
+                    // Fill bar with gradient
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(
+                            LinearGradient(
+                                colors: barGradientColors,
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
                         .frame(width: max(2, geo.size.width * CGFloat(window.usedPercent / 100)))
 
-                    // pace tick (借鉴 CodexBar 的预期进度刻度)
+                    // Pace tick
                     if let pace, pace.expectedPercent > 0, pace.expectedPercent < 100 {
                         Rectangle()
-                            .fill(Color.primary.opacity(0.6))
-                            .frame(width: 2, height: 12)
+                            .fill(Color.primary.opacity(0.5))
+                            .frame(width: 2, height: 10)
                             .offset(x: geo.size.width * CGFloat(pace.expectedPercent / 100) - 1)
                     }
                 }
             }
-            .frame(height: 12)
+            .frame(height: 8)
 
-            HStack(spacing: 6) {
-                if let resetDesc = window.resetDescription {
-                    Label(resetDesc, systemImage: "clock.arrow.circlepath")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
+            // Bottom info row
+            HStack {
+                Text("\(String(format: "%.0f", window.remainingPercent))% left")
+                    .font(.caption)
+                    .foregroundStyle(barColor)
+                    .fontWeight(.medium)
+
                 Spacer()
-                Text("剩余 \(formatRemaining())")
+
+                Text(formatUsed())
                     .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.secondary)
+
                 if let pace {
                     paceTag(pace)
                 }
             }
         }
-        .padding(10)
-        .background(Color.primary.opacity(0.035))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .padding(.vertical, 10)
+    }
+
+    private var barGradientColors: [Color] {
+        switch window.severity {
+        case .critical:
+            return [Color.errorRed.opacity(0.8), Color.errorRed]
+        case .warning:
+            return [Color.warningOrange.opacity(0.8), Color.warningOrange]
+        case .normal:
+            return [Color.successGreen.opacity(0.7), Color.successGreen]
+        }
+    }
+
+    private var barColor: Color {
+        switch window.severity {
+        case .critical: return .errorRed
+        case .warning: return .warningOrange
+        case .normal: return .successGreen
+        }
     }
 
     private func formatUsed() -> String {
@@ -453,25 +904,6 @@ struct RateWindowBar: View {
             return "\(Int(window.usedAmount).formattedCompact) / \(Int(window.limitAmount).formattedCompact) tok"
         default:
             return "\(Int(window.usedAmount)) / \(Int(window.limitAmount)) \(window.unit)"
-        }
-    }
-
-    private func formatRemaining() -> String {
-        switch window.unit {
-        case "USD":
-            return window.remainingAmount.formattedCurrency
-        case "tok":
-            return "\(Int(window.remainingAmount).formattedCompact) tok"
-        default:
-            return "\(Int(window.remainingAmount)) \(window.unit)"
-        }
-    }
-
-    private var color: Color {
-        switch window.severity {
-        case .critical: return .errorRed
-        case .warning:  return .warningOrange
-        case .normal:   return .successGreen
         }
     }
 
@@ -495,6 +927,73 @@ struct RateWindowBar: View {
     }
 }
 
+// MARK: - Hourly Mini Chart
+
+private struct HourlyMiniChart: View {
+    let provider: LLMProvider
+    @ObservedObject var database: DatabaseService
+
+    private struct HourlyBucket: Identifiable {
+        let id: Int
+        let hour: Int
+        let count: Int
+    }
+
+    private struct ChartData {
+        let buckets: [HourlyBucket]
+        let topModel: String
+    }
+
+    private var chartData: ChartData {
+        let now = Date()
+        let calendar = Calendar.current
+        let logs = database.fetchLogs(provider: provider,
+                                       since: now.addingTimeInterval(-24 * 3600),
+                                       until: now)
+        // Hourly buckets
+        var counts = [Int: Int]()
+        for i in 0..<24 { counts[i] = 0 }
+
+        // Model counts
+        var modelCounts = [String: Int]()
+
+        for log in logs {
+            let hour = calendar.component(.hour, from: log.timestamp)
+            counts[hour, default: 0] += 1
+            if let model = log.modelName {
+                modelCounts[model, default: 0] += 1
+            }
+        }
+
+        let buckets = counts.map { HourlyBucket(id: $0.key, hour: $0.key, count: $0.value) }
+            .sorted { $0.hour < $1.hour }
+        let topModel = modelCounts.max(by: { $0.value < $1.value })?.key ?? "—"
+
+        return ChartData(buckets: buckets, topModel: topModel)
+    }
+
+    var body: some View {
+        let data = chartData
+        VStack(alignment: .leading, spacing: 4) {
+            Chart(data.buckets) { bucket in
+                BarMark(
+                    x: .value("Hour", bucket.hour),
+                    y: .value("Count", bucket.count)
+                )
+                .foregroundStyle(provider.brandColor.gradient)
+                .cornerRadius(2)
+            }
+            .chartXAxis(.hidden)
+            .chartYAxis(.hidden)
+
+            Text("Top model: \(data.topModel)")
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+        }
+    }
+}
+
+
 // MARK: - Detected Plan Badge
 
 private struct DetectedPlanBadge: View {
@@ -502,14 +1001,14 @@ private struct DetectedPlanBadge: View {
     let source: String
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 3) {
             Image(systemName: "person.badge.key.fill")
-                .font(.system(size: 9))
+                .font(.system(size: 8))
             Text(planName)
-                .font(.system(size: 10, weight: .medium))
+                .font(.system(size: 9, weight: .medium))
         }
         .padding(.horizontal, 6)
-        .padding(.vertical, 3)
+        .padding(.vertical, 2)
         .background(Color.accentColor.opacity(0.12))
         .foregroundStyle(Color.accentColor)
         .clipShape(Capsule())
@@ -546,7 +1045,35 @@ private struct SeverityBadge: View {
     }
 }
 
-// MARK: - Editor Sheet
+// MARK: - LLMProvider Short Name
+
+extension LLMProvider {
+    var shortName: String {
+        switch self {
+        case .openai: return "OpenAI"
+        case .anthropic: return "Anthro…"
+        case .google: return "Google"
+        case .warp: return "Warp"
+        case .ollama: return "Ollama"
+        case .cursor: return "Cursor"
+        case .copilot: return "Copilot"
+        case .claudeDesktop: return "Claude"
+        case .cline: return "Cline"
+        case .lmstudio: return "LMStudio"
+        case .continuedev: return "Continue"
+        case .deepseek: return "DeepSeek"
+        case .qwen: return "Qwen"
+        case .kimi: return "Kimi"
+        case .zhipu: return "GLM"
+        case .amp: return "Amp"
+        case .antigravity: return "Antigra…"
+        case .pi: return "Pi"
+        case .custom: return "Custom"
+        }
+    }
+}
+
+// MARK: - Editor Sheet (preserved)
 
 struct RateLimitEditor: View {
     @EnvironmentObject var configService: ConfigService

@@ -191,6 +191,7 @@ struct DashboardView: View {
             } else {
                 let providerData = stats.callsByProvider.map { ProviderChartData(provider: $0.key, count: $0.value) }
                     .sorted { $0.count > $1.count }
+                let totalCount = providerData.reduce(0) { $0 + $1.count }
 
                 Chart(providerData) { item in
                     SectorMark(
@@ -201,31 +202,55 @@ struct DashboardView: View {
                     .foregroundStyle(item.provider.brandColor)
                     .cornerRadius(4)
                     .annotation(position: .overlay) {
-                        if item.count > 0 {
-                            Text(item.provider.displayName)
-                                .font(.caption2)
-                                .fontWeight(.semibold)
-                                .foregroundStyle(.white)
-                        }
-                    }
-                }
-                .chartLegend(position: .bottom, alignment: .center, spacing: 8) {
-                    HStack(spacing: 12) {
-                        ForEach(providerData) { item in
-                            HStack(spacing: 4) {
-                                Circle()
-                                    .fill(item.provider.brandColor)
-                                    .frame(width: 8, height: 8)
-                                Text("\(item.provider.displayName): \(item.count)")
-                                    .font(.caption2)
+                        // Only show overlay label when slice is large enough (>15%)
+                        if totalCount > 0, Double(item.count) / Double(totalCount) > 0.15 {
+                            VStack(spacing: 1) {
+                                Text(item.provider.displayName)
+                                    .font(.system(size: 10, weight: .semibold))
+                                Text("\(percentText(item.count, total: totalCount))")
+                                    .font(.system(size: 9))
+                                    .opacity(0.8)
                             }
+                            .foregroundStyle(.white)
                         }
                     }
                 }
+                .chartLegend(.hidden)
+
+                // Custom legend with wrapping layout
+                providerLegend(data: providerData, total: totalCount)
             }
         }
         .frame(minWidth: 280)
         .cardStyle()
+    }
+
+    private func providerLegend(data: [ProviderChartData], total: Int) -> some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 130), spacing: 6)], alignment: .leading, spacing: 6) {
+            ForEach(data) { item in
+                HStack(spacing: 5) {
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(item.provider.brandColor)
+                        .frame(width: 10, height: 10)
+                    Text(item.provider.displayName)
+                        .font(.caption2)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    Text("\(item.count)")
+                        .font(.caption2.monospacedDigit())
+                        .fontWeight(.medium)
+                    Text(percentText(item.count, total: total))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 32, alignment: .trailing)
+                }
+            }
+        }
+    }
+
+    private func percentText(_ count: Int, total: Int) -> String {
+        guard total > 0 else { return "0%" }
+        return String(format: "%.0f%%", Double(count) / Double(total) * 100)
     }
 
     // MARK: - Model Bar Chart

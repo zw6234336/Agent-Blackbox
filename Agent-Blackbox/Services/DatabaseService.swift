@@ -473,16 +473,40 @@ final class DatabaseService: ObservableObject {
             // Average response time
             stats.avgResponseTime = try db.scalar(filterTable.select(duration.average)) ?? 0.0
 
-            // Calls by provider
-            var providerQuery = "SELECT provider, COUNT(*) as cnt FROM logs WHERE provider IS NOT NULL "
+            // Calls and stats by provider
+            var providerQuery = """
+                SELECT provider,
+                       COUNT(*) as cnt,
+                       COALESCE(SUM(total_tokens), 0) as tokens,
+                       COALESCE(SUM(estimated_cost), 0.0) as cost,
+                       COALESCE(AVG(duration), 0.0) as avg_dur
+                FROM logs
+                WHERE provider IS NOT NULL
+            """
             if let start = startTimestamp {
-                providerQuery += "AND timestamp >= \(start) "
+                providerQuery += " AND timestamp >= \(start)"
             }
-            providerQuery += "GROUP BY provider ORDER BY cnt DESC"
+            providerQuery += " GROUP BY provider ORDER BY cnt DESC"
+            
             for row in try db.prepare(providerQuery) {
-                if let pStr = row[0] as? String, let provider = LLMProvider(rawValue: pStr),
-                   let count = row[1] as? Int64 {
-                    stats.callsByProvider[provider] = Int(count)
+                if let pStr = row[0] as? String, let provider = LLMProvider(rawValue: pStr) {
+                    let count = Int(row[1] as? Int64 ?? 0)
+                    let tokens = Int(row[2] as? Int64 ?? 0)
+                    
+                    let costVal = row[3]
+                    let cost = costVal as? Double ?? Double(costVal as? Int64 ?? 0)
+                    
+                    let avgDurVal = row[4]
+                    let avgDur = avgDurVal as? Double ?? Double(avgDurVal as? Int64 ?? 0)
+                    
+                    stats.callsByProvider[provider] = count
+                    stats.providerStats[provider] = ProviderStat(
+                        provider: provider,
+                        count: count,
+                        tokens: tokens,
+                        cost: cost,
+                        avgDuration: avgDur
+                    )
                 }
             }
 

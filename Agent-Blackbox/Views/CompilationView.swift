@@ -124,7 +124,7 @@ struct CompilationView: View {
 
     private var emptyState: some View {
         VStack(spacing: 16) {
-            Image(systemName: "doc.text.append")
+            Image(systemName: "doc.append")
                 .font(.system(size: 48))
                 .foregroundStyle(.tertiary)
             Text("日志编译")

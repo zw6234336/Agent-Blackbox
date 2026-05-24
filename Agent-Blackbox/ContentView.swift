@@ -20,7 +20,7 @@ struct ContentView: View {
                         .tag(1)
                     Label("收藏", systemImage: "star.fill")
                         .tag(2)
-                    Label("编译", systemImage: "doc.text.append")
+                    Label("编译", systemImage: "doc.append")
                         .tag(6)
                 }
 

@@ -38,7 +38,7 @@ struct CompilationListRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: "doc.text.append")
+            Image(systemName: "doc.append")
                 .foregroundStyle(Color.accentGradientStart)
                 .frame(width: 20)
 
