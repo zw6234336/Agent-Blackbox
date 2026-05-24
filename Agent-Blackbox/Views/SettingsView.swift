@@ -380,6 +380,20 @@ struct SettingsView: View {
                         clientInterceptionStatus(for: .cursorRooCline)
                     }
                 }
+                
+                Toggle(isOn: $configService.config.enableClaudeCodeInterception) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Claude Code")
+                        clientInterceptionStatus(for: .claudeCode)
+                    }
+                }
+                
+                Toggle(isOn: $configService.config.enablePiInterception) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Pi Agent")
+                        clientInterceptionStatus(for: .pi)
+                    }
+                }
             }
             
             Section("Cursor 核心设置 (说明)") {

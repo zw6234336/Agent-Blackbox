@@ -121,6 +121,8 @@ struct MonitorConfig: Codable, Equatable {
     var enableVSCodeRooClineInterception: Bool = false
     var enableCursorClineInterception: Bool = false
     var enableCursorRooClineInterception: Bool = false
+    var enableClaudeCodeInterception: Bool = false
+    var enablePiInterception: Bool = false
     
     /// Token rates per 1K tokens (input, output) in USD
     /// 来源：各厂商官方定价页（2025-06）
@@ -154,6 +156,105 @@ struct MonitorConfig: Codable, Equatable {
 
     /// 速率统计采样间隔（秒）
     var rateSamplingInterval: TimeInterval = 5.0
+
+    // MARK: - Decodable Custom Implementation
+    
+    enum CodingKeys: String, CodingKey {
+        case monitoredDirectories
+        case filePatterns
+        case isRecursive
+        case refreshInterval
+        case databasePath
+        case enableNotifications
+        case autoStart
+        case enabledProviders
+        case dataRetentionDays
+        case exportDirectory
+        case enableProxy
+        case proxyPort
+        case openaiUpstreamUrl
+        case anthropicUpstreamUrl
+        case enableVSCodeClineInterception
+        case enableVSCodeRooClineInterception
+        case enableCursorClineInterception
+        case enableCursorRooClineInterception
+        case enableClaudeCodeInterception
+        case enablePiInterception
+        case tokenRates
+        case providerRateLimits
+        case rateSamplingInterval
+    }
+    
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        
+        self.monitoredDirectories = try container.decodeIfPresent([String].self, forKey: .monitoredDirectories) ?? MonitorConfig.defaultTargetedDirectories()
+        
+        self.filePatterns = try container.decodeIfPresent([String].self, forKey: .filePatterns) ?? [
+            "*.log", "*.txt", "*llm*.json", "*.jsonl",
+            "state.vscdb", "session-store.db", "*.db",
+            "api_conversation_history.json",
+            "warp_network.log",
+            "T-*.json",
+            "*/chatSessions/*.json",
+            "*/threads/T-*.json",
+            "*/dev.warp.Warp-Stable/mcp/*.log",
+            "*/.pi/*.json",
+            "*/.pi/*.jsonl",
+            "*/com.inflection.pi/*.json",
+            "pi-conversation-*.json"
+        ]
+        
+        self.isRecursive = try container.decodeIfPresent(Bool.self, forKey: .isRecursive) ?? true
+        self.refreshInterval = try container.decodeIfPresent(TimeInterval.self, forKey: .refreshInterval) ?? 1.0
+        self.databasePath = try container.decodeIfPresent(String.self, forKey: .databasePath) ?? (NSHomeDirectory() + "/Library/Application Support/Agent-Blackbox/logs.db")
+        self.enableNotifications = try container.decodeIfPresent(Bool.self, forKey: .enableNotifications) ?? true
+        self.autoStart = try container.decodeIfPresent(Bool.self, forKey: .autoStart) ?? true
+        self.enabledProviders = try container.decodeIfPresent([String].self, forKey: .enabledProviders) ?? LLMProvider.allCases.map { $0.rawValue }
+        self.dataRetentionDays = try container.decodeIfPresent(Int.self, forKey: .dataRetentionDays) ?? 90
+        self.exportDirectory = try container.decodeIfPresent(String.self, forKey: .exportDirectory) ?? (NSHomeDirectory() + "/Library/Application Support/Agent-Blackbox/Exports/")
+        
+        self.enableProxy = try container.decodeIfPresent(Bool.self, forKey: .enableProxy) ?? true
+        self.proxyPort = try container.decodeIfPresent(Int.self, forKey: .proxyPort) ?? 9999
+        self.openaiUpstreamUrl = try container.decodeIfPresent(String.self, forKey: .openaiUpstreamUrl) ?? "https://api.openai.com"
+        self.anthropicUpstreamUrl = try container.decodeIfPresent(String.self, forKey: .anthropicUpstreamUrl) ?? "https://api.anthropic.com"
+        
+        self.enableVSCodeClineInterception = try container.decodeIfPresent(Bool.self, forKey: .enableVSCodeClineInterception) ?? false
+        self.enableVSCodeRooClineInterception = try container.decodeIfPresent(Bool.self, forKey: .enableVSCodeRooClineInterception) ?? false
+        self.enableCursorClineInterception = try container.decodeIfPresent(Bool.self, forKey: .enableCursorClineInterception) ?? false
+        self.enableCursorRooClineInterception = try container.decodeIfPresent(Bool.self, forKey: .enableCursorRooClineInterception) ?? false
+        self.enableClaudeCodeInterception = try container.decodeIfPresent(Bool.self, forKey: .enableClaudeCodeInterception) ?? false
+        self.enablePiInterception = try container.decodeIfPresent(Bool.self, forKey: .enablePiInterception) ?? false
+        
+        self.tokenRates = try container.decodeIfPresent([String: TokenRate].self, forKey: .tokenRates) ?? [:]
+        if self.tokenRates.isEmpty {
+            self.tokenRates = [
+                "gpt-4": TokenRate(inputPer1K: 0.03, outputPer1K: 0.06),
+                "gpt-4-turbo": TokenRate(inputPer1K: 0.01, outputPer1K: 0.03),
+                "gpt-4o": TokenRate(inputPer1K: 0.0025, outputPer1K: 0.01),
+                "gpt-4o-mini": TokenRate(inputPer1K: 0.00015, outputPer1K: 0.0006),
+                "gpt-4o-2024-11-20": TokenRate(inputPer1K: 0.0025, outputPer1K: 0.01),
+                "gpt-3.5-turbo": TokenRate(inputPer1K: 0.0005, outputPer1K: 0.0015),
+                "claude-3-opus": TokenRate(inputPer1K: 0.015, outputPer1K: 0.075),
+                "claude-3.5-sonnet": TokenRate(inputPer1K: 0.003, outputPer1K: 0.015),
+                "claude-3.5-haiku": TokenRate(inputPer1K: 0.0008, outputPer1K: 0.004),
+                "claude-3-haiku": TokenRate(inputPer1K: 0.00025, outputPer1K: 0.00125),
+                "claude-sonnet-4": TokenRate(inputPer1K: 0.003, outputPer1K: 0.015),
+                "claude-sonnet-4-5": TokenRate(inputPer1K: 0.003, outputPer1K: 0.015),
+                "claude-haiku-4": TokenRate(inputPer1K: 0.0008, outputPer1K: 0.004),
+                "claude-opus-4": TokenRate(inputPer1K: 0.015, outputPer1K: 0.075),
+                "gemini-pro": TokenRate(inputPer1K: 0.0005, outputPer1K: 0.0015),
+                "gemini-1.5-pro": TokenRate(inputPer1K: 0.00125, outputPer1K: 0.005),
+                "gemini-1.5-flash": TokenRate(inputPer1K: 0.000075, outputPer1K: 0.0003),
+                "gemini-2.0-flash": TokenRate(inputPer1K: 0.0001, outputPer1K: 0.0004),
+                "gemini-2.5-pro": TokenRate(inputPer1K: 0.00125, outputPer1K: 0.01)
+            ]
+        }
+        self.providerRateLimits = try container.decodeIfPresent([String: ProviderRateLimit].self, forKey: .providerRateLimits) ?? ProviderRateLimit.defaults()
+        self.rateSamplingInterval = try container.decodeIfPresent(TimeInterval.self, forKey: .rateSamplingInterval) ?? 5.0
+    }
 }
 
 struct TokenRate: Codable, Equatable {

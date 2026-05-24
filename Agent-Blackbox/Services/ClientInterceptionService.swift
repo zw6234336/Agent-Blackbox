@@ -6,6 +6,8 @@ enum InterceptClient: String, CaseIterable, Identifiable {
     case vscodeRooCline = "vscode_roo_cline"
     case cursorCline = "cursor_cline"
     case cursorRooCline = "cursor_roo_cline"
+    case claudeCode = "claude_code"
+    case pi = "pi"
     
     var id: String { rawValue }
     
@@ -15,6 +17,8 @@ enum InterceptClient: String, CaseIterable, Identifiable {
         case .vscodeRooCline: return "VS Code Roo-Cline"
         case .cursorCline: return "Cursor Cline"
         case .cursorRooCline: return "Cursor Roo-Cline"
+        case .claudeCode: return "Claude Code"
+        case .pi: return "Pi Agent"
         }
     }
     
@@ -29,6 +33,10 @@ enum InterceptClient: String, CaseIterable, Identifiable {
             return URL(fileURLWithPath: home + "/Library/Application Support/Cursor/User/globalStorage/saoudrizwan.claude-dev/settings/cline_settings.json")
         case .cursorRooCline:
             return URL(fileURLWithPath: home + "/Library/Application Support/Cursor/User/globalStorage/roovet.roo-cline/settings/roo_cline_settings.json")
+        case .claudeCode:
+            return URL(fileURLWithPath: home + "/.claude/settings.json")
+        case .pi:
+            return URL(fileURLWithPath: home + "/.pi/agent/models.json")
         }
     }
     
@@ -68,6 +76,8 @@ final class ClientInterceptionService: ObservableObject {
         updateInterceptionState(.vscodeRooCline, shouldIntercept: config.enableVSCodeRooClineInterception)
         updateInterceptionState(.cursorCline, shouldIntercept: config.enableCursorClineInterception)
         updateInterceptionState(.cursorRooCline, shouldIntercept: config.enableCursorRooClineInterception)
+        updateInterceptionState(.claudeCode, shouldIntercept: config.enableClaudeCodeInterception)
+        updateInterceptionState(.pi, shouldIntercept: config.enablePiInterception)
     }
     
     func updateInterceptionState(_ client: InterceptClient, shouldIntercept: Bool) {
@@ -124,16 +134,74 @@ final class ClientInterceptionService: ObservableObject {
             throw NSError(domain: "ClientInterceptionService", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid JSON format"])
         }
         
-        // 3. Inject our proxy configurations
-        json["apiProvider"] = "openai"
-        json["openAiBaseUrl"] = "http://127.0.0.1:\(proxyPort)/v1"
-        
-        // Ensure standard fields are filled so Cline does not show error panels
-        if (json["openAiModelId"] as? String)?.isEmpty ?? true {
-            json["openAiModelId"] = "gpt-4o"
-        }
-        if (json["openAiApiKey"] as? String)?.isEmpty ?? true {
-            json["openAiApiKey"] = "agent-blackbox-proxy"
+        switch client {
+        case .vscodeCline, .vscodeRooCline, .cursorCline, .cursorRooCline:
+            // 3. Inject our proxy configurations
+            json["apiProvider"] = "openai"
+            json["openAiBaseUrl"] = "http://127.0.0.1:\(proxyPort)/v1"
+            
+            // Ensure standard fields are filled so Cline does not show error panels
+            if (json["openAiModelId"] as? String)?.isEmpty ?? true {
+                json["openAiModelId"] = "gpt-4o"
+            }
+            if (json["openAiApiKey"] as? String)?.isEmpty ?? true {
+                json["openAiApiKey"] = "agent-blackbox-proxy"
+            }
+            
+        case .claudeCode:
+            var env = json["env"] as? [String: String] ?? [:]
+            env["ANTHROPIC_BASE_URL"] = "http://127.0.0.1:\(proxyPort)"
+            json["env"] = env
+            
+        case .pi:
+            guard var providers = json["providers"] as? [String: [String: Any]] else {
+                throw NSError(domain: "ClientInterceptionService", code: 2, userInfo: [NSLocalizedDescriptionKey: "No providers object found"])
+            }
+            
+            // If zai is not explicitly defined, we inject it to intercept built-in zai calls
+            if providers["zai"] == nil {
+                let authKey = getZaiAuthKey()
+                providers["zai"] = [
+                    "api": "openai-completions",
+                    "apiKey": authKey ?? "zai_api_key",
+                    "baseUrl": "http://127.0.0.1:\(proxyPort)/v1",
+                    "headers": [
+                        "x-upstream-url": "https://open.bigmodel.cn/api/paas/v4",
+                        "x-client-identifier": "pi"
+                    ],
+                    "models": [
+                        ["id": "glm-5.1", "name": "GLM-5.1", "contextWindow": 200000, "maxTokens": 4096, "input": ["text"]],
+                        ["id": "glm-5", "name": "GLM-5", "contextWindow": 200000, "maxTokens": 4096, "input": ["text"]],
+                        ["id": "glm-4.7", "name": "GLM-4.7", "contextWindow": 204800, "maxTokens": 4096, "input": ["text"]],
+                        ["id": "glm-4.7-flash", "name": "GLM-4.7 Flash", "contextWindow": 204800, "maxTokens": 4096, "input": ["text"]]
+                    ]
+                ]
+            }
+            
+            for (key, var provider) in providers {
+                if let oldBaseUrl = provider["baseUrl"] as? String {
+                    if oldBaseUrl.contains("127.0.0.1") && oldBaseUrl.contains("\(proxyPort)") {
+                        continue
+                    }
+                    
+                    var upstreamBase = oldBaseUrl
+                    if upstreamBase.hasSuffix("/v1") {
+                        upstreamBase = String(upstreamBase.dropLast(3))
+                    } else if upstreamBase.hasSuffix("/v1/") {
+                        upstreamBase = String(upstreamBase.dropLast(4))
+                    }
+                    
+                    var headers = provider["headers"] as? [String: String] ?? [:]
+                    headers["x-upstream-url"] = upstreamBase
+                    headers["x-client-identifier"] = "pi"
+                    provider["headers"] = headers
+                    
+                    provider["baseUrl"] = "http://127.0.0.1:\(proxyPort)/v1"
+                    providers[key] = provider
+                }
+            }
+            
+            json["providers"] = providers
         }
         
         // 4. Write modified JSON back
@@ -161,6 +229,17 @@ final class ClientInterceptionService: ObservableObject {
         try fm.removeItem(at: backupURL)
         
         Logger.shared.info("自动接管: 已恢复 \(client.displayName) 原始配置并删除备份")
+    }
+    
+    private func getZaiAuthKey() -> String? {
+        let authURL = NSHomeDirectory() + "/.pi/agent/auth.json"
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: authURL)),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let zaiDict = json["zai"] as? [String: Any],
+              let key = zaiDict["key"] as? String else {
+            return nil
+        }
+        return key
     }
     
     func restoreAll() {

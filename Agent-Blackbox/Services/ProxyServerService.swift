@@ -17,6 +17,7 @@ struct ProxyRequestLog: Identifiable, Hashable {
     var completionTokens: Int?
     var errorMessage: String?
     var isPending: Bool
+    var estimatedCost: Double? = nil
 }
 
 @MainActor
@@ -264,7 +265,7 @@ final class ProxyServerService: ObservableObject {
             }
             if modelLower.contains("glm-") || modelLower.contains("zhipu") {
                 Logger.shared.info("网关代理: 检测到智谱 GLM 模型 \(model)，自动路由至智谱清言 API")
-                return "https://open.bigmodel.cn"
+                return "https://open.bigmodel.cn/api/paas/v4"
             }
             if modelLower.contains("ollama") {
                 Logger.shared.info("网关代理: 检测到 Ollama 模型 \(model)，自动路由至本地 Ollama 默认服务")
@@ -292,8 +293,10 @@ final class ProxyServerService: ObservableObject {
         let cleanBase = upstreamBase.hasSuffix("/") ? String(upstreamBase.dropLast()) : upstreamBase
         var cleanPath = path.hasPrefix("/") ? path : "/\(path)"
         
-        // For Gemini, rewrite "/v1/chat/completions" to "/chat/completions" if the base contains openapi
-        if cleanBase.contains("generativelanguage.googleapis.com") {
+        // For Gemini or Zhipu (bigmodel.cn/v4) rewrite "/v1/chat/completions" to "/chat/completions"
+        if cleanBase.contains("generativelanguage.googleapis.com") || 
+           cleanBase.contains("bigmodel.cn") || 
+           cleanBase.contains("/v4") {
             if cleanPath.hasPrefix("/v1/") {
                 cleanPath = String(cleanPath.dropFirst(3)) // "/v1/chat/completions" -> "/chat/completions"
             }
@@ -306,7 +309,9 @@ final class ProxyServerService: ObservableObject {
 
         // Detect downstream client from headers
         var client = "unknown"
-        if let ua = headers["user-agent"]?.lowercased() {
+        if let clientIdentifier = headers["x-client-identifier"]?.lowercased() {
+            client = clientIdentifier
+        } else if let ua = headers["user-agent"]?.lowercased() {
             if ua.contains("cline") || ua.contains("claude-dev") || ua.contains("roo-cline") {
                 client = "cline"
             } else if ua.contains("cursor") || ua.contains("vscodium") {
@@ -444,6 +449,9 @@ final class ProxyServerService: ObservableObject {
         let totalTokensVal = (promptTokensVal != nil || completionTokensVal != nil) ? ((promptTokensVal ?? 0) + (completionTokensVal ?? 0)) : nil
         let errorMessage = error?.localizedDescription ?? (statusCode >= 400 ? "HTTP Error \(statusCode)" : nil)
 
+        // Calculate Cost
+        let cost = calculateCost(model: model, promptTokens: promptTokensVal ?? 0, completionTokens: completionTokensVal ?? 0)
+
         // Update live requests list
         if let index = self.liveRequests.firstIndex(where: { $0.id == requestId }) {
             self.liveRequests[index].isPending = false
@@ -453,13 +461,11 @@ final class ProxyServerService: ObservableObject {
             self.liveRequests[index].completionTokens = completionTokensVal
             self.liveRequests[index].response = responseText
             self.liveRequests[index].errorMessage = errorMessage
+            self.liveRequests[index].estimatedCost = cost
             if model != "unknown" {
                 self.liveRequests[index].model = model
             }
         }
-
-        // Calculate Cost
-        let cost = calculateCost(model: model, promptTokens: promptTokensVal ?? 0, completionTokens: completionTokensVal ?? 0)
 
         // Classify Provider based on path and model name keywords
         let provider: LLMProvider
@@ -715,6 +721,13 @@ private func parseRequestBody(_ data: Data) -> RequestData {
         return RequestData(model: model, prompt: parts.joined(separator: "\n"))
     }
     
+    // Try OpenAI text completions format (prompt is a String or Array of Strings)
+    if let prompt = json["prompt"] as? String {
+        return RequestData(model: model, prompt: prompt)
+    } else if let promptArray = json["prompt"] as? [String] {
+        return RequestData(model: model, prompt: promptArray.joined(separator: "\n"))
+    }
+    
     return RequestData(model: model, prompt: nil)
 }
 
@@ -748,11 +761,15 @@ private func parseResponseBody(_ data: Data, isAnthropic: Bool) -> ResponseData 
         let total = (inputTokens != nil || outputTokens != nil) ? ((inputTokens ?? 0) + (outputTokens ?? 0)) : nil
         return ResponseData(text: text, promptTokens: inputTokens, completionTokens: outputTokens, totalTokens: total, modelOverride: modelOverride)
     } else {
-        // OpenAI format
+        // OpenAI format (chat completions message vs text completions text)
         let choices = json["choices"] as? [[String: Any]]
         let firstChoice = choices?.first
-        let message = firstChoice?["message"] as? [String: Any]
-        let text = message?["content"] as? String
+        let text: String?
+        if let message = firstChoice?["message"] as? [String: Any] {
+            text = message["content"] as? String
+        } else {
+            text = firstChoice?["text"] as? String
+        }
         
         let usage = json["usage"] as? [String: Any]
         let promptTokens = usage?["prompt_tokens"] as? Int
@@ -811,11 +828,14 @@ private func parseSSEStream(_ data: Data, isAnthropic: Bool) -> ResponseData {
                 }
             }
         } else {
-            // OpenAI format
+            // OpenAI format (chat completion delta vs text completion text)
             if let choices = chunkJSON["choices"] as? [[String: Any]],
                let first = choices.first {
-                if let delta = first["delta"] as? [String: Any],
-                   let text = delta["content"] as? String {
+                if let delta = first["delta"] as? [String: Any] {
+                    if let text = delta["content"] as? String {
+                        assistantText += text
+                    }
+                } else if let text = first["text"] as? String {
                     assistantText += text
                 }
             }
