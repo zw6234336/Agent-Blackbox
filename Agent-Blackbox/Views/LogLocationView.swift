@@ -86,7 +86,7 @@ struct LogLocationView: View {
         .task {
             await database.reloadLogs()
         }
-        .onChange(of: selectedFilePath) { _ in
+        .onChange(of: selectedFilePath) {
             selectedLog = nil
         }
     }

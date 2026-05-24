@@ -65,7 +65,7 @@ final class FileMonitorService: ObservableObject {
 
         guard let eventStream else { return }
 
-        FSEventStreamScheduleWithRunLoop(eventStream, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
+        FSEventStreamSetDispatchQueue(eventStream, DispatchQueue.main)
         isMonitoring = FSEventStreamStart(eventStream)
         Logger.shared.info("开始监控: \(monitoredPaths.joined(separator: ", "))")
         

@@ -230,7 +230,7 @@ final class CompilationService: ObservableObject {
     // MARK: - Generation Core
 
     private func performGeneration(_ compilationId: UUID) async {
-        guard var compilation = compilations.first(where: { $0.id == compilationId }) else {
+        guard let compilation = compilations.first(where: { $0.id == compilationId }) else {
             isGenerating = false
             return
         }
