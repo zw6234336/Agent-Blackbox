@@ -33,6 +33,10 @@ struct PiParser: LogParser {
         }
         // 内容特征检测：Inflection API 响应或对话格式
         if content.contains("inflection-3") || content.contains("inflection-2") || content.contains("pi.ai") {
+            // 排除其他客户端/编辑器的私有日志路径，防止误判通用日志（例如 LSP 索引、VSCode 插件日志）
+            if path.contains("/code/") || path.contains("/cursor/") || path.contains("/claude/") || path.contains("/warp/") || path.contains("/saoudrizwan.claude-dev/") {
+                return false
+            }
             return true
         }
 
@@ -184,8 +188,8 @@ struct PiParser: LogParser {
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { continue }
 
-            // 检测 API 调用行
-            if trimmed.contains("inflection") || trimmed.contains("pi.ai") || trimmed.contains("/v1/chat/completions") {
+            // 检测 API 调用行（必须明确包含 inflection 或 pi.ai，防止误判通用的 /v1/chat/completions）
+            if trimmed.contains("inflection") || trimmed.contains("pi.ai") {
                 let timestamp = extractTimestamp(from: trimmed) ?? fileDate
                 let model = firstMatch(in: trimmed, pattern: #"inflection[\w\-.]+"#)
                     ?? firstMatch(in: trimmed, pattern: #"model["':\s]+([\w\-.]+)"#)

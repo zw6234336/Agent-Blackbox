@@ -89,16 +89,18 @@ final class FileMonitorService: ObservableObject {
     }
 
     private func handleFileEvent(path: String, flags: FSEventStreamEventFlags) {
-        guard flags.containsOne(of: [
-            FSEventStreamEventFlags(kFSEventStreamEventFlagItemCreated),
-            FSEventStreamEventFlags(kFSEventStreamEventFlagItemModified),
-            FSEventStreamEventFlags(kFSEventStreamEventFlagItemRenamed)
-        ]) else {
+        // Exclude removed events
+        if flags.containsOne(of: [FSEventStreamEventFlags(kFSEventStreamEventFlagItemRemoved)]) {
             return
         }
 
         let url = URL(fileURLWithPath: path)
         guard matchesPattern(url) else { return }
+
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir), !isDir.boolValue else {
+            return
+        }
 
         if detectedLogSet.insert(url).inserted {
             detectedLogs.insert(url, at: 0)
@@ -112,8 +114,10 @@ final class FileMonitorService: ObservableObject {
         }
 
         Task {
-            guard let parsed = await parser.parseLogFile(at: url) else { return }
-            await database?.saveLog(parsed)
+            let results = await parser.parseAllEntries(at: url)
+            if !results.isEmpty {
+                await database?.saveLogs(results)
+            }
         }
     }
 

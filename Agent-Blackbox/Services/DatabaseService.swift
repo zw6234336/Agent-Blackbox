@@ -131,6 +131,23 @@ final class DatabaseService: ObservableObject {
                 // Column likely already exists, ignore
             }
         }
+
+        // Clean up historically misclassified Pi logs from other tools' folders
+        do {
+            let cleanupQuery = """
+                DELETE FROM logs 
+                WHERE provider = 'pi' 
+                  AND (
+                    source_file LIKE '%/Code/logs/%' 
+                    OR source_file LIKE '%/Cursor/logs/%' 
+                    OR source_file LIKE '%/saoudrizwan.claude-dev/%' 
+                    OR source_file LIKE '%/dev.warp.Warp-Stable/%'
+                  )
+            """
+            try db?.run(cleanupQuery)
+        } catch {
+            Logger.shared.error("历史误判日志清理失败: \(error.localizedDescription)")
+        }
     }
 
     // MARK: - Log CRUD
@@ -171,6 +188,7 @@ final class DatabaseService: ObservableObject {
             totalLogCount += 1
             if let err = log.errorMessage, !err.isEmpty { errorLogCount += 1 }
             if log.isBookmarked { bookmarkedCount += 1 }
+            refreshDashboardStats()
         } catch {
             Logger.shared.error("日志保存失败: \(error.localizedDescription)")
         }
@@ -181,6 +199,7 @@ final class DatabaseService: ObservableObject {
     func saveLogs(_ logsToSave: [ParsedLog]) async {
         guard let db, !logsToSave.isEmpty else { return }
         do {
+            var insertedCount = 0
             try db.transaction {
                 for log in logsToSave {
                     let metadata = (try? String(data: JSONSerialization.data(withJSONObject: log.metadata), encoding: .utf8)) ?? "{}"
@@ -206,9 +225,15 @@ final class DatabaseService: ObservableObject {
                                                   conversationId <- log.conversationId,
                                                   metadataJSON <- metadata)
                     try db.run(insert)
+                    if db.changes > 0 {
+                        insertedCount += 1
+                    }
                 }
             }
-            await reloadLogs()
+            if insertedCount > 0 {
+                await reloadLogs()
+                refreshDashboardStats()
+            }
         } catch {
             Logger.shared.error("批量日志保存失败: \(error.localizedDescription)")
         }
