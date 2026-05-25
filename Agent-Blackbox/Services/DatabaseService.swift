@@ -591,6 +591,7 @@ final class DatabaseService: ObservableObject {
                 let daysLimit = daysToUse ?? 90
                 let limitVal: Double
                 let dayQuery: String
+                let modelDayQuery: String
                 let formatter = DateFormatter()
                 
                 if daysLimit == 0 {
@@ -604,6 +605,16 @@ final class DatabaseService: ObservableObject {
                         GROUP BY hour_bucket
                         ORDER BY hour_bucket ASC
                     """
+                    modelDayQuery = """
+                        SELECT strftime('%Y-%m-%d %H:00:00', timestamp, 'unixepoch', 'localtime') as hour_bucket,
+                               model_name,
+                               COALESCE(SUM(prompt_tokens), 0) as pt,
+                               COALESCE(SUM(completion_tokens), 0) as ct
+                        FROM logs
+                        WHERE timestamp >= \(limitVal) AND model_name IS NOT NULL AND model_name != ''
+                        GROUP BY hour_bucket, model_name
+                        ORDER BY hour_bucket ASC
+                    """
                     formatter.dateFormat = "yyyy-MM-dd HH:00:00"
                 } else {
                     limitVal = Date().addingTimeInterval(-Double(daysLimit) * 24 * 3600).timeIntervalSince1970
@@ -614,6 +625,16 @@ final class DatabaseService: ObservableObject {
                         FROM logs
                         WHERE timestamp >= \(limitVal)
                         GROUP BY day_bucket
+                        ORDER BY day_bucket ASC
+                    """
+                    modelDayQuery = """
+                        SELECT date(timestamp, 'unixepoch', 'localtime') as day_bucket,
+                               model_name,
+                               COALESCE(SUM(prompt_tokens), 0) as pt,
+                               COALESCE(SUM(completion_tokens), 0) as ct
+                        FROM logs
+                        WHERE timestamp >= \(limitVal) AND model_name IS NOT NULL AND model_name != ''
+                        GROUP BY day_bucket, model_name
                         ORDER BY day_bucket ASC
                     """
                     formatter.dateFormat = "yyyy-MM-dd"
@@ -632,6 +653,73 @@ final class DatabaseService: ObservableObject {
                         }
                     }
                 }
+
+                // Query and aggregate model-specific token usage
+                struct RawModelTokenPoint {
+                    let date: Date
+                    let modelName: String
+                    let promptTokens: Int
+                    let completionTokens: Int
+                }
+                var rawPoints: [RawModelTokenPoint] = []
+                var modelTotalTokens: [String: Int] = [:]
+
+                for row in try dbConnection.prepare(modelDayQuery) {
+                    if let bucketStr = row[0] as? String,
+                       let mName = row[1] as? String,
+                       let pt = row[2] as? Int64,
+                       let ct = row[3] as? Int64 {
+                        if let date = formatter.date(from: bucketStr) {
+                            let ptInt = Int(pt)
+                            let ctInt = Int(ct)
+                            rawPoints.append(RawModelTokenPoint(
+                                date: date,
+                                modelName: mName,
+                                promptTokens: ptInt,
+                                completionTokens: ctInt
+                            ))
+                            modelTotalTokens[mName, default: 0] += (ptInt + ctInt)
+                        }
+                    }
+                }
+
+                // Determine top 5 models
+                let topModels = modelTotalTokens.sorted { $0.value > $1.value }
+                    .prefix(5)
+                    .map { $0.key }
+                let topModelsSet = Set(topModels)
+
+                // Group points by (date, simplifiedModelName) and sum tokens
+                var groupedPoints: [Date: [String: (prompt: Int, completion: Int)]] = [:]
+                for point in rawPoints {
+                    let modelKey = topModelsSet.contains(point.modelName) ? point.modelName : "其他"
+                    if groupedPoints[point.date] == nil {
+                        groupedPoints[point.date] = [:]
+                    }
+                    let current = groupedPoints[point.date]?[modelKey] ?? (0, 0)
+                    groupedPoints[point.date]?[modelKey] = (current.0 + point.promptTokens, current.1 + point.completionTokens)
+                }
+
+                // Convert to final [ModelDayTokens] sorted by date and model name
+                var modelTokensByDayResult: [ModelDayTokens] = []
+                for (date, modelsData) in groupedPoints {
+                    for (modelName, tokens) in modelsData {
+                        modelTokensByDayResult.append(ModelDayTokens(
+                            date: date,
+                            modelName: modelName,
+                            promptTokens: tokens.prompt,
+                            completionTokens: tokens.completion
+                        ))
+                    }
+                }
+                // Sort by date, then by model name (so lines render predictably)
+                modelTokensByDayResult.sort {
+                    if $0.date == $1.date {
+                        return $0.modelName < $1.modelName
+                    }
+                    return $0.date < $1.date
+                }
+                stats.modelTokensByDay = modelTokensByDayResult
 
                 // Recent logs
                 let recentLogsRows = try dbConnection.prepare(self.logsTable.order(self.timestamp.desc).limit(10))

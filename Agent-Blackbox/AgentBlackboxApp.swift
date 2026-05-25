@@ -29,7 +29,7 @@ struct AgentBlackboxApp: App {
     }
 
     var body: some Scene {
-        WindowGroup(id: "main") {
+        Window("Agent Blackbox", id: "main") {
             ContentView()
                 .environmentObject(fileMonitor)
                 .environmentObject(database)

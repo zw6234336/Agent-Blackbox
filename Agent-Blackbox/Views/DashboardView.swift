@@ -30,6 +30,7 @@ struct DashboardView: View {
 
     var body: some View {
         ScrollView {
+            // 外层主 ScrollView：看板整体滚动容器
             VStack(spacing: 20) {
                 // Header with refresh
                 headerSection
@@ -378,67 +379,63 @@ struct DashboardView: View {
 
     // MARK: - Token Trend Chart
 
+    private func colorForModel(_ modelName: String) -> Color {
+        let lower = modelName.lowercased()
+        if lower.contains("gpt-4") || lower.contains("gpt-3") {
+            return Color(red: 0.1, green: 0.65, blue: 0.45) // 翡翠绿 (OpenAI)
+        } else if lower.contains("claude") || lower.contains("anthropic") {
+            return Color(red: 0.95, green: 0.45, blue: 0.2) // 珊瑚橙 (Anthropic)
+        } else if lower.contains("gemini") {
+            return Color(red: 0.4, green: 0.3, blue: 0.9) // 极光紫 (Google)
+        } else if lower.contains("deepseek") {
+            return Color(red: 0.12, green: 0.45, blue: 0.9) // 科技蓝 (DeepSeek)
+        } else if lower.contains("llama") || lower.contains("ollama") {
+            return Color(red: 0.85, green: 0.65, blue: 0.1) // 金黄色 (Llama)
+        } else if lower == "other" || lower == "其它" || lower == "其他" {
+            return Color.secondary
+        } else {
+            let hash = abs(modelName.hashValue)
+            let colors: [Color] = [
+                .teal, .indigo, .pink, .cyan, .mint, .orange, .purple
+            ]
+            return colors[hash % colors.count]
+        }
+    }
+
     private var tokenTrendChart: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Token 使用趋势")
                 .font(.headline)
 
-            if stats.tokensByDay.isEmpty {
+            if stats.modelTokensByDay.isEmpty {
                 emptyChartPlaceholder("暂无数据")
             } else {
-                Chart(stats.tokensByDay) { day in
-                    // Prompt Tokens Line
+                let uniqueModels = Array(Set(stats.modelTokensByDay.map { $0.modelName })).sorted()
+                Chart(stats.modelTokensByDay) { point in
                     LineMark(
-                        x: .value("时间", day.date),
-                        y: .value("Tokens", day.promptTokens)
+                        x: .value("时间", point.date),
+                        y: .value("Tokens", point.totalTokens)
                     )
-                    .foregroundStyle(by: .value("类型", "Prompt"))
+                    .foregroundStyle(by: .value("模型", point.modelName))
                     .interpolationMethod(.monotone)
                     .lineStyle(StrokeStyle(lineWidth: 2.5))
                     
                     AreaMark(
-                        x: .value("时间", day.date),
-                        y: .value("Tokens", day.promptTokens)
+                        x: .value("时间", point.date),
+                        y: .value("Tokens", point.totalTokens)
                     )
-                    .foregroundStyle(by: .value("类型", "Prompt"))
-                    .opacity(0.12)
+                    .foregroundStyle(by: .value("模型", point.modelName))
+                    .opacity(0.08)
                     .interpolationMethod(.monotone)
 
                     PointMark(
-                        x: .value("时间", day.date),
-                        y: .value("Tokens", day.promptTokens)
+                        x: .value("时间", point.date),
+                        y: .value("Tokens", point.totalTokens)
                     )
-                    .foregroundStyle(by: .value("类型", "Prompt"))
-                    .symbolSize(18)
-
-                    // Completion Tokens Line
-                    LineMark(
-                        x: .value("时间", day.date),
-                        y: .value("Tokens", day.completionTokens)
-                    )
-                    .foregroundStyle(by: .value("类型", "Completion"))
-                    .interpolationMethod(.monotone)
-                    .lineStyle(StrokeStyle(lineWidth: 2.5))
-
-                    AreaMark(
-                        x: .value("时间", day.date),
-                        y: .value("Tokens", day.completionTokens)
-                    )
-                    .foregroundStyle(by: .value("类型", "Completion"))
-                    .opacity(0.12)
-                    .interpolationMethod(.monotone)
-
-                    PointMark(
-                        x: .value("时间", day.date),
-                        y: .value("Tokens", day.completionTokens)
-                    )
-                    .foregroundStyle(by: .value("类型", "Completion"))
+                    .foregroundStyle(by: .value("模型", point.modelName))
                     .symbolSize(18)
                 }
-                .chartForegroundStyleScale([
-                    "Prompt": Color.infoBlue,
-                    "Completion": Color.accentGradientStart
-                ])
+                .chartForegroundStyleScale(domain: uniqueModels, range: uniqueModels.map { colorForModel($0) })
                 .chartYAxis {
                     AxisMarks(position: .leading) { value in
                         AxisValueLabel {
@@ -457,7 +454,8 @@ struct DashboardView: View {
                             AxisGridLine()
                         }
                     } else {
-                        AxisMarks(values: .stride(by: .day, count: stats.tokensByDay.count > 10 ? 7 : 1)) { value in
+                        let uniqueDaysCount = Set(stats.modelTokensByDay.map { $0.date }).count
+                        AxisMarks(values: .stride(by: .day, count: uniqueDaysCount > 10 ? 7 : 1)) { value in
                             AxisValueLabel(format: .dateTime.month().day())
                             AxisGridLine()
                         }
@@ -829,8 +827,10 @@ struct DashboardView: View {
                                 )
                             }
                         }
+                        .padding(.bottom, 4)
                     }
                     .frame(maxHeight: 320)
+                    .scrollBounceBehavior(.basedOnSize)
                 }
             }
         }
@@ -869,7 +869,10 @@ struct DashboardView: View {
                             }
                         }
                     }
+                    .padding(.bottom, 4)
                 }
+                .frame(maxHeight: 320)
+                .scrollBounceBehavior(.basedOnSize)
             }
         }
         .frame(minWidth: 320)

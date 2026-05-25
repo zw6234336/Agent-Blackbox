@@ -11,6 +11,7 @@ struct DashboardStats {
     var providerStats: [LLMProvider: ProviderStat] = [:]
     var callsByModel: [String: Int] = [:]
     var tokensByDay: [DayTokens] = []
+    var modelTokensByDay: [ModelDayTokens] = []
     var recentLogs: [ParsedLog] = []
     
     var slowestLog: ParsedLog? = nil
@@ -36,6 +37,17 @@ struct DayTokens: Identifiable, Hashable {
     
     var totalTokens: Int { promptTokens + completionTokens }
 }
+
+struct ModelDayTokens: Identifiable, Hashable {
+    let id = UUID()
+    let date: Date
+    let modelName: String
+    let promptTokens: Int
+    let completionTokens: Int
+    
+    var totalTokens: Int { promptTokens + completionTokens }
+}
+
 
 struct ProviderStat: Identifiable, Hashable {
     let id = UUID()
