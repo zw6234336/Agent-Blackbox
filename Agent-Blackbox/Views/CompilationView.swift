@@ -535,10 +535,18 @@ struct NewCompilationSheet: View {
         .padding()
         .frame(width: 420, height: 480)
         .onAppear {
-            NSApp.activate(ignoringOtherApps: true)
+            activateApp()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                 focusedField = .name
             }
+        }
+    }
+
+    private func activateApp() {
+        if #available(macOS 14.0, *) {
+            NSApp.activate()
+        } else {
+            NSApp.activate(ignoringOtherApps: true)
         }
     }
 }

@@ -1,6 +1,28 @@
 import SwiftUI
 import AppKit
 
+// MARK: - WindowAccessor
+// Bridge to obtain the underlying NSWindow of the SwiftUI view it is attached to.
+// Used to force a sheet window to become key so that NSTextField / TextField
+// can actually receive keyDown events instead of just showing a focus ring.
+struct WindowAccessor: NSViewRepresentable {
+    let callback: (NSWindow?) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async {
+            callback(view.window)
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async {
+            callback(nsView.window)
+        }
+    }
+}
+
 // MARK: - StatusIndicator (legacy compatibility)
 struct StatusIndicator: View {
     let isActive: Bool

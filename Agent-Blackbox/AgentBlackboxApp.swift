@@ -1,6 +1,26 @@
 import SwiftUI
+import AppKit
 
 class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // Force the app to become the active foreground application.
+        // Without this, launching from Xcode often leaves Xcode as the active
+        // app, and key events never reach our windows even though mouse clicks
+        // do (sheets show focus rings but typing does nothing).
+        NSApp.setActivationPolicy(.regular)
+        if #available(macOS 14.0, *) {
+            NSApp.activate()
+        } else {
+            NSApp.activate(ignoringOtherApps: true)
+        }
+        // Bring the main window forward and make it key once it exists.
+        DispatchQueue.main.async {
+            NSApp.windows
+                .first { $0.canBecomeKey && $0.title == "Agent Blackbox" }?
+                .makeKeyAndOrderFront(nil)
+        }
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         return false
     }
