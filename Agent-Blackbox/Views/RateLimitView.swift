@@ -1116,8 +1116,10 @@ struct RateLimitEditor: View {
     private func field(_ title: String, _ binding: Binding<String>, placeholder: String) -> some View {
         HStack {
             Text(title).frame(width: 180, alignment: .leading)
-            TextField(placeholder, text: binding)
-                .textFieldStyle(.roundedBorder)
+            AppKitTextField(
+                placeholder: placeholder,
+                    text: binding
+            )
         }
     }
 

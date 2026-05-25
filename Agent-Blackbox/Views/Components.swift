@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 // MARK: - StatusIndicator (legacy compatibility)
 struct StatusIndicator: View {
@@ -119,5 +120,68 @@ struct FilterChip: View {
             )
         }
         .buttonStyle(.plain)
+    }
+}
+
+// MARK: - AppKit Text Field
+struct AppKitTextField: NSViewRepresentable {
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        var parent: AppKitTextField
+
+        init(parent: AppKitTextField) {
+            self.parent = parent
+        }
+
+        func controlTextDidChange(_ notification: Notification) {
+            guard let textField = notification.object as? NSTextField else { return }
+            if parent.text != textField.stringValue {
+                parent.text = textField.stringValue
+            }
+        }
+
+        func controlTextDidEndEditing(_ notification: Notification) {
+            parent.onSubmit?()
+        }
+    }
+
+    let placeholder: String
+    @Binding var text: String
+    var shouldFocus: Bool = false
+    var onSubmit: (() -> Void)? = nil
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
+
+    func makeNSView(context: Context) -> NSTextField {
+        let textField = NSTextField(string: text)
+        textField.placeholderString = placeholder
+        textField.delegate = context.coordinator
+        textField.isBordered = true
+        textField.isBezeled = true
+        textField.bezelStyle = .roundedBezel
+        textField.focusRingType = .default
+        textField.lineBreakMode = .byTruncatingTail
+        textField.usesSingleLineMode = true
+        textField.maximumNumberOfLines = 1
+        return textField
+    }
+
+    func updateNSView(_ nsView: NSTextField, context: Context) {
+        context.coordinator.parent = self
+
+        if nsView.stringValue != text {
+            nsView.stringValue = text
+        }
+
+        nsView.placeholderString = placeholder
+
+        if shouldFocus,
+           let window = nsView.window,
+           window.firstResponder !== nsView.currentEditor() {
+            DispatchQueue.main.async {
+                window.makeFirstResponder(nsView)
+            }
+        }
     }
 }

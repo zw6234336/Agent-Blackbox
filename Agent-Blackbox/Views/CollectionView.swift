@@ -176,25 +176,23 @@ struct NewCollectionSheet: View {
 
     @State private var name = ""
     @State private var description = ""
-    @FocusState private var focusedField: Field?
-
-    private enum Field {
-        case name
-        case description
-    }
+    @State private var shouldFocusNameField = false
 
     var body: some View {
         VStack(spacing: 16) {
             Text("新建收藏夹")
                 .font(.headline)
 
-            TextField("名称", text: $name)
-                .textFieldStyle(.roundedBorder)
-                .focused($focusedField, equals: .name)
+            AppKitTextField(
+                placeholder: "名称",
+                text: $name,
+                shouldFocus: shouldFocusNameField
+            )
 
-            TextField("描述（可选）", text: $description)
-                .textFieldStyle(.roundedBorder)
-                .focused($focusedField, equals: .description)
+            AppKitTextField(
+                placeholder: "描述（可选）",
+                text: $description
+            )
 
             HStack {
                 Button("取消") {
@@ -216,8 +214,11 @@ struct NewCollectionSheet: View {
         .frame(width: 350)
         .onAppear {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                focusedField = .name
+                shouldFocusNameField = true
             }
+        }
+        .onDisappear {
+            shouldFocusNameField = false
         }
     }
 }

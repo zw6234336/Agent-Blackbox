@@ -438,25 +438,23 @@ struct NewCompilationSheet: View {
     let onCreate: (NewCompilationDraft) -> Void
 
     @State private var draft = NewCompilationDraft()
-    @FocusState private var focusedField: Field?
-
-    private enum Field {
-        case name
-        case description
-    }
+    @State private var shouldFocusNameField = false
 
     var body: some View {
         VStack(spacing: 14) {
             Text("新建编译")
                 .font(.headline)
 
-            TextField("名称", text: $draft.name)
-                .textFieldStyle(.roundedBorder)
-                .focused($focusedField, equals: .name)
+            AppKitTextField(
+                placeholder: "名称",
+                text: $draft.name,
+                shouldFocus: shouldFocusNameField
+            )
 
-            TextField("描述（可选）", text: $draft.description)
-                .textFieldStyle(.roundedBorder)
-                .focused($focusedField, equals: .description)
+            AppKitTextField(
+                placeholder: "描述（可选）",
+                text: $draft.description
+            )
 
             HStack {
                 Text("输出格式")
@@ -534,8 +532,11 @@ struct NewCompilationSheet: View {
         .frame(width: 420, height: 480)
         .onAppear {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                focusedField = .name
+                shouldFocusNameField = true
             }
+        }
+        .onDisappear {
+            shouldFocusNameField = false
         }
     }
 }
