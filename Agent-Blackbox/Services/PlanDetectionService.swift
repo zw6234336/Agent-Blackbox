@@ -44,15 +44,21 @@ final class PlanDetectionService: ObservableObject {
 
         var results: [LLMProvider: DetectedPlan] = [:]
 
-        async let copilot = detectCopilot()
-        async let cursor  = detectCursor()
-        async let claude  = detectClaudeDesktop()
-        async let claudeCode = detectClaudeCode()
+        async let copilot     = detectCopilot()
+        async let cursor      = detectCursor()
+        async let claudeApp   = detectClaudeDesktop()
+        async let claudeCode  = detectClaudeCodeOrZAI()
+        async let antigravity = detectAntigravity()
+        async let zaiPi       = detectZAIViaPi()
 
-        if let plan = await copilot { results[.copilot]       = plan }
-        if let plan = await cursor  { results[.cursor]        = plan }
-        if let plan = await claude  { results[.claudeDesktop] = plan }
-        if let plan = await claudeCode { results[.anthropic]   = plan }
+        if let plan = await copilot     { results[.copilot]       = plan }
+        if let plan = await cursor      { results[.cursor]        = plan }
+        if let plan = await claudeApp   { results[.claudeDesktop] = plan }
+        // claude-code 可能配的是真 Claude 也可能是 Z.AI，按检测出的 provider 入表
+        if let plan = await claudeCode  { results[plan.provider]  = plan }
+        if let plan = await antigravity { results[.antigravity]   = plan }
+        // Pi 配置里的 Z.AI key 优先级最高（如果两边都有，覆盖 claude-code 的检测）
+        if let plan = await zaiPi       { results[.zhipu]         = plan }
 
         detectedPlans = results
         lastDetectedAt = Date()
@@ -109,13 +115,15 @@ final class PlanDetectionService: ObservableObject {
             }
         }
 
-        // 最终回退：有 token 但 API 全部失败 → 按 Pro 默认处理，但标注来源
-        Logger.shared.info("Copilot 检测: API 均失败，回退到默认 Copilot Pro")
+        // 最终回退：有 token 但 API 全部失败 → 仅标记"已授权"，不臆测套餐档位
+        // 旧版本会默认回退到 Copilot Pro 并写入 300 次/月配额，这是错的：
+        // 用户可能是 Free / Business / Enterprise，硬塞 Pro 会污染速率限制。
+        Logger.shared.info("Copilot 检测: API 均失败，仅标记已授权（不假定套餐档位）")
         return DetectedPlan(
             provider: .copilot,
-            planName: "Copilot (已授权，API 未响应)",
-            rateLimit: ProviderRateLimit.defaultCopilotPro,
-            source: "本地凭证（回退默认）",
+            planName: "Copilot (已授权，套餐档位未知)",
+            rateLimit: ProviderRateLimit(), // 全 nil，避免污染配额
+            source: "本地凭证（API 未响应）",
             detectedAt: Date()
         )
     }
@@ -546,37 +554,176 @@ final class PlanDetectionService: ObservableObject {
         )
     }
 
-    private func detectClaudeCode() async -> DetectedPlan? {
+    // MARK: - Claude Code (智能识别后端真正的 Provider)
+
+    /// 读 ~/.claude/settings.json 的 env 配置，根据 token 格式 / baseURL / model 名
+    /// 判断 Claude Code 当前实际接的是哪个后端：
+    /// - sk-ant-* + 官方 base URL → 真 Anthropic API
+    /// - sk-ant-* + 无 base URL（或默认）→ 真 Anthropic API
+    /// - <32hex>.<16字符> 格式 → Z.AI (智谱) API key
+    /// - base URL 含 bigmodel.cn / z.ai → Z.AI
+    /// - 默认模型含 glm- → Z.AI（即使 token 格式无法判断）
+    /// - 本地 127.0.0.1 + glm-* 模型 → Z.AI 经本地代理
+    /// - 都不匹配但 token 非空 → Anthropic 订阅会员（最后回退）
+    private func detectClaudeCodeOrZAI() async -> DetectedPlan? {
         let settingsPath = NSHomeDirectory() + "/.claude/settings.json"
         guard FileManager.default.fileExists(atPath: settingsPath) else { return nil }
-        
+
+        let data: Data
         do {
-            let data = try Data(contentsOf: URL(fileURLWithPath: settingsPath))
-            if let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let env = obj["env"] as? [String: Any],
-               let token = env["ANTHROPIC_AUTH_TOKEN"] as? String, !token.isEmpty {
-                
-                if token.hasPrefix("sk-ant-") {
-                    return DetectedPlan(
-                        provider: .anthropic,
-                        planName: "Claude Code (API Key 模式)",
-                        rateLimit: ProviderRateLimit.defaultAnthropicTier1,
-                        source: "Claude Code 配置",
-                        detectedAt: Date()
-                    )
-                } else {
-                    return DetectedPlan(
-                        provider: .anthropic,
-                        planName: "Claude Pro (订阅会员)",
-                        rateLimit: ProviderRateLimit.defaultClaudePro,
-                        source: "Claude Code 凭证",
-                        detectedAt: Date()
-                    )
-                }
-            }
+            data = try Data(contentsOf: URL(fileURLWithPath: settingsPath))
         } catch {
             Logger.shared.info("Claude Code 检测: 读取 settings.json 失败: \(error.localizedDescription)")
+            return nil
         }
-        return nil
+
+        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let env = obj["env"] as? [String: Any],
+              let token = env["ANTHROPIC_AUTH_TOKEN"] as? String, !token.isEmpty
+        else { return nil }
+
+        let baseURL = (env["ANTHROPIC_BASE_URL"] as? String ?? "").lowercased()
+        let modelHints: [String] = [
+            (env["ANTHROPIC_DEFAULT_HAIKU_MODEL"]  as? String) ?? "",
+            (env["ANTHROPIC_DEFAULT_SONNET_MODEL"] as? String) ?? "",
+            (env["ANTHROPIC_DEFAULT_OPUS_MODEL"]   as? String) ?? "",
+            (env["ANTHROPIC_MODEL"]                as? String) ?? "",
+            (obj["model"]                          as? String) ?? "",
+        ].map { $0.lowercased() }
+        let anyModelGLM  = modelHints.contains { $0.contains("glm") || $0.contains("chatglm") || $0.contains("zhipu") }
+        let baseIsZAI    = baseURL.contains("bigmodel.cn") || baseURL.contains("z.ai")
+        let baseIsLocal  = baseURL.contains("127.0.0.1") || baseURL.contains("localhost")
+        let baseIsAnthropic = baseURL.isEmpty || baseURL.contains("anthropic.com")
+        let tokenLooksLikeZAI = isZAIKeyFormat(token)
+        let tokenLooksLikeAnthropicAPI = token.hasPrefix("sk-ant-")
+
+        // 判定为 Z.AI 的条件（任一即可）
+        if baseIsZAI || anyModelGLM || tokenLooksLikeZAI {
+            Logger.shared.info("Claude Code 检测: 实际后端为 Z.AI (baseURL=\(baseURL), models=\(modelHints), zaiKey=\(tokenLooksLikeZAI))")
+            return DetectedPlan(
+                provider: .zhipu,
+                planName: "Z.AI Coding Plan (经 Claude Code)",
+                rateLimit: ProviderRateLimit.defaultZAICoding,
+                source: baseIsLocal ? "Claude Code → 本地代理 → Z.AI" : "Claude Code → Z.AI",
+                detectedAt: Date()
+            )
+        }
+
+        // 判定为真 Anthropic API
+        if tokenLooksLikeAnthropicAPI && baseIsAnthropic {
+            return DetectedPlan(
+                provider: .anthropic,
+                planName: "Claude Code (Anthropic API Key)",
+                rateLimit: ProviderRateLimit.defaultAnthropicTier1,
+                source: "Claude Code 配置",
+                detectedAt: Date()
+            )
+        }
+
+        // 真 Anthropic API + 非默认 URL（自建代理）
+        if tokenLooksLikeAnthropicAPI {
+            return DetectedPlan(
+                provider: .anthropic,
+                planName: "Claude Code (API Key, 经代理: \(baseURL))",
+                rateLimit: ProviderRateLimit.defaultAnthropicTier1,
+                source: "Claude Code 配置",
+                detectedAt: Date()
+            )
+        }
+
+        // Anthropic 订阅会员（OAuth session token）：只有在排除 Z.AI 后才能这样断言
+        if baseIsAnthropic {
+            return DetectedPlan(
+                provider: .anthropic,
+                planName: "Claude Pro/Max (订阅会员)",
+                rateLimit: ProviderRateLimit.defaultClaudePro,
+                source: "Claude Code 凭证",
+                detectedAt: Date()
+            )
+        }
+
+        // 既不像 Z.AI 也不像 Anthropic、又是非官方 base URL → 标为"未知后端"，不臆测配额
+        Logger.shared.info("Claude Code 检测: 无法识别后端 (baseURL=\(baseURL))，标为未知")
+        return DetectedPlan(
+            provider: .anthropic,
+            planName: "Claude Code (未知后端: \(baseURL))",
+            rateLimit: ProviderRateLimit(),
+            source: "Claude Code 配置",
+            detectedAt: Date()
+        )
+    }
+
+    /// 检查字符串是否符合 Z.AI API key 格式：32 位 hex + "." + 16 位字母数字
+    /// 例如：71c15e12c34245b99cf0577fe6b12b54.Y84lu4pdnz7uHjVw
+    private func isZAIKeyFormat(_ s: String) -> Bool {
+        let parts = s.split(separator: ".", maxSplits: 1, omittingEmptySubsequences: false)
+        guard parts.count == 2 else { return false }
+        let head = String(parts[0])
+        let tail = String(parts[1])
+        guard head.count == 32, tail.count == 16 else { return false }
+        let hexSet = CharacterSet(charactersIn: "0123456789abcdefABCDEF")
+        let alnumSet = CharacterSet.alphanumerics
+        return head.unicodeScalars.allSatisfy(hexSet.contains)
+            && tail.unicodeScalars.allSatisfy(alnumSet.contains)
+    }
+
+    // MARK: - Google Antigravity
+
+    /// 读 ~/.antigravity_cockpit/credentials.json
+    /// 里面是 Google OAuth Token，accounts.<email>.{accessToken,refreshToken,projectId}
+    private func detectAntigravity() async -> DetectedPlan? {
+        let credPath = NSHomeDirectory() + "/.antigravity_cockpit/credentials.json"
+        guard FileManager.default.fileExists(atPath: credPath) else { return nil }
+
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: credPath)),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let accounts = obj["accounts"] as? [String: Any],
+              let (email, accountObj) = accounts.first,
+              let account = accountObj as? [String: Any]
+        else {
+            Logger.shared.info("Antigravity 检测: credentials.json 存在但格式不识别")
+            return nil
+        }
+
+        let hasAccessToken = (account["accessToken"] as? String)?.isEmpty == false
+        guard hasAccessToken else { return nil }
+
+        let projectId = account["projectId"] as? String ?? ""
+        let displayName = projectId.isEmpty
+            ? "Antigravity Preview (\(email))"
+            : "Antigravity Preview (\(email) / \(projectId))"
+
+        Logger.shared.info("Antigravity 检测: \(email) 已登录")
+        return DetectedPlan(
+            provider: .antigravity,
+            planName: displayName,
+            rateLimit: ProviderRateLimit.defaultAntigravityPreview,
+            source: "Antigravity Cockpit 凭证",
+            detectedAt: Date()
+        )
+    }
+
+    // MARK: - Z.AI via Pi config
+
+    /// Pi Agent 在 ~/.pi/agent/auth.json 里也可能存了 Z.AI key
+    /// 与 detectClaudeCodeOrZAI 互补：用户可能只在 Pi 配置 Z.AI 而没在 Claude Code 配
+    private func detectZAIViaPi() async -> DetectedPlan? {
+        let authPath = NSHomeDirectory() + "/.pi/agent/auth.json"
+        guard FileManager.default.fileExists(atPath: authPath) else { return nil }
+
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: authPath)),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let zai = json["zai"] as? [String: Any],
+              let key = zai["key"] as? String, !key.isEmpty
+        else { return nil }
+
+        Logger.shared.info("Z.AI 检测: 在 Pi 配置中找到 key (prefix=\(key.prefix(8)))")
+        return DetectedPlan(
+            provider: .zhipu,
+            planName: "Z.AI Coding Plan (经 Pi)",
+            rateLimit: ProviderRateLimit.defaultZAICoding,
+            source: "Pi Agent 配置",
+            detectedAt: Date()
+        )
     }
 }

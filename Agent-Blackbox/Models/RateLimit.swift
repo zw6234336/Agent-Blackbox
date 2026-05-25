@@ -253,6 +253,28 @@ struct ProviderRateLimit: Codable, Hashable {
         fiveHourRequestLimit: 50
     )
 
+    /// Z.AI / 智谱 Coding Plan（$3~$15/月）
+    /// 参考：https://docs.z.ai/devpack/overview
+    /// Lite: 约 120 prompts/5h；Pro/Max 更高
+    static let defaultZAICoding = ProviderRateLimit(
+        rpmLimit: nil,
+        tpmLimit: nil,
+        requestsPerHourLimit: nil,
+        tokensPerHourLimit: nil,
+        dailyTokenLimit: nil,
+        monthlyRequestLimit: nil,
+        fiveHourRequestLimit: 120
+    )
+
+    /// Google Antigravity Preview（当前免费 Beta，无公开配额）
+    static let defaultAntigravityPreview = ProviderRateLimit(
+        rpmLimit: nil,
+        tpmLimit: nil,
+        requestsPerHourLimit: nil,
+        tokensPerHourLimit: nil,
+        dailyTokenLimit: nil
+    )
+
     /// 本地模型（Ollama / LM Studio）：理论无限制，仅监控吞吐
     static let defaultLocal = ProviderRateLimit(
         rpmLimit: nil,

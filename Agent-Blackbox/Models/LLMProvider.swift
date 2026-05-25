@@ -55,7 +55,7 @@ enum LLMProvider: String, Codable, CaseIterable, Identifiable {
         case .warp: return "terminal.fill"
         case .ollama: return "desktopcomputer"
         case .cursor: return "cursorarrow.rays"
-        case .copilot: return "robot"
+        case .copilot: return "chevron.left.forwardslash.chevron.right"
         case .claudeDesktop: return "bubble.left.fill"
         case .cline: return "terminal"
         case .lmstudio: return "cpu"
