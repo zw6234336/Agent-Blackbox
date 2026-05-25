@@ -661,7 +661,7 @@ private struct ProviderDetailView: View {
 
     /// 与 RateLimitTrackerService 内一致的主窗口优先级
     private var primaryKind: RateWindow.WindowKind? {
-        let order: [RateWindow.WindowKind] = [.dailyCost, .dailyTokens, .tokens1h, .requests1h, .tpm1m, .rpm1m]
+        let order: [RateWindow.WindowKind] = [.dailyTokens, .tokens1h, .requests1h, .tpm1m, .rpm1m]
         for k in order where snapshot.windows.contains(where: { $0.kind == k }) {
             return k
         }
@@ -689,8 +689,8 @@ private struct ProviderDetailView: View {
                 subValue: "并发"
             )
             statCell(
-                label: "Today cost",
-                value: snapshot.totalCost24h.formattedCurrency,
+                label: "Avg duration",
+                value: snapshot.concurrency.avgDurationSeconds.formattedDuration,
                 subValue: nil
             )
         }
@@ -1080,8 +1080,6 @@ struct RateLimitEditor: View {
     @State private var rphStr: String = ""
     @State private var tphStr: String = ""
     @State private var dTokStr: String = ""
-    @State private var dCostStr: String = ""
-    @State private var mCostStr: String = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -1104,8 +1102,6 @@ struct RateLimitEditor: View {
                 }
                 Section("配额预算") {
                     field("每日 token 上限",         $dTokStr, placeholder: "如 5000000")
-                    field("每日预算 (USD)",         $dCostStr, placeholder: "如 50")
-                    field("每月预算 (USD)",         $mCostStr, placeholder: "如 500")
                 }
             }
             .formStyle(.grouped)
@@ -1133,8 +1129,6 @@ struct RateLimitEditor: View {
         rphStr = current.requestsPerHourLimit.map(String.init) ?? ""
         tphStr = current.tokensPerHourLimit.map(String.init) ?? ""
         dTokStr = current.dailyTokenLimit.map(String.init) ?? ""
-        dCostStr = current.dailyCostLimit.map { String($0) } ?? ""
-        mCostStr = current.monthlyCostLimit.map { String($0) } ?? ""
     }
 
     private func save() {
@@ -1143,9 +1137,7 @@ struct RateLimitEditor: View {
             tpmLimit: Int(tpmStr),
             requestsPerHourLimit: Int(rphStr),
             tokensPerHourLimit: Int(tphStr),
-            dailyTokenLimit: Int(dTokStr),
-            dailyCostLimit: Double(dCostStr),
-            monthlyCostLimit: Double(mCostStr)
+            dailyTokenLimit: Int(dTokStr)
         )
         configService.config.providerRateLimits[provider.rawValue] = new
         configService.save()

@@ -37,7 +37,7 @@ struct DashboardView: View {
                 // Safety Interception Status Center
                 safetyGuardBanner
 
-                // Redesigned Top metrics grid (focus on costs and savings)
+                // Redesigned Top metrics grid (focus on technical throughput and latency)
                 metricsGrid
 
                 // Anomaly & Heavyweight Spotlights (vulnerabilities slowest/heaviest)
@@ -387,18 +387,58 @@ struct DashboardView: View {
                 emptyChartPlaceholder("暂无数据")
             } else {
                 Chart(stats.tokensByDay) { day in
-                    BarMark(
-                        x: .value("日期", day.date, unit: .day),
-                        y: .value("Prompt", day.promptTokens)
+                    // Prompt Tokens Line
+                    LineMark(
+                        x: .value("时间", day.date),
+                        y: .value("Tokens", day.promptTokens)
                     )
-                    .foregroundStyle(Color.infoBlue.gradient)
+                    .foregroundStyle(by: .value("类型", "Prompt"))
+                    .interpolationMethod(.monotone)
+                    .lineStyle(StrokeStyle(lineWidth: 2.5))
+                    
+                    AreaMark(
+                        x: .value("时间", day.date),
+                        y: .value("Tokens", day.promptTokens)
+                    )
+                    .foregroundStyle(by: .value("类型", "Prompt"))
+                    .opacity(0.12)
+                    .interpolationMethod(.monotone)
 
-                    BarMark(
-                        x: .value("日期", day.date, unit: .day),
-                        y: .value("Completion", day.completionTokens)
+                    PointMark(
+                        x: .value("时间", day.date),
+                        y: .value("Tokens", day.promptTokens)
                     )
-                    .foregroundStyle(Color.accentGradientStart.gradient)
+                    .foregroundStyle(by: .value("类型", "Prompt"))
+                    .symbolSize(18)
+
+                    // Completion Tokens Line
+                    LineMark(
+                        x: .value("时间", day.date),
+                        y: .value("Tokens", day.completionTokens)
+                    )
+                    .foregroundStyle(by: .value("类型", "Completion"))
+                    .interpolationMethod(.monotone)
+                    .lineStyle(StrokeStyle(lineWidth: 2.5))
+
+                    AreaMark(
+                        x: .value("时间", day.date),
+                        y: .value("Tokens", day.completionTokens)
+                    )
+                    .foregroundStyle(by: .value("类型", "Completion"))
+                    .opacity(0.12)
+                    .interpolationMethod(.monotone)
+
+                    PointMark(
+                        x: .value("时间", day.date),
+                        y: .value("Tokens", day.completionTokens)
+                    )
+                    .foregroundStyle(by: .value("类型", "Completion"))
+                    .symbolSize(18)
                 }
+                .chartForegroundStyleScale([
+                    "Prompt": Color.infoBlue,
+                    "Completion": Color.accentGradientStart
+                ])
                 .chartYAxis {
                     AxisMarks(position: .leading) { value in
                         AxisValueLabel {
@@ -411,9 +451,16 @@ struct DashboardView: View {
                     }
                 }
                 .chartXAxis {
-                    AxisMarks(values: .stride(by: .day, count: 7)) { value in
-                        AxisValueLabel(format: .dateTime.month().day())
-                        AxisGridLine()
+                    if timeRange == .today {
+                        AxisMarks(values: .stride(by: .hour, count: 3)) { value in
+                            AxisValueLabel(format: .dateTime.hour(.defaultDigits(amPM: .omitted)))
+                            AxisGridLine()
+                        }
+                    } else {
+                        AxisMarks(values: .stride(by: .day, count: stats.tokensByDay.count > 10 ? 7 : 1)) { value in
+                            AxisValueLabel(format: .dateTime.month().day())
+                            AxisGridLine()
+                        }
                     }
                 }
                 .chartLegend(position: .top, alignment: .trailing)

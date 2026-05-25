@@ -6,13 +6,9 @@ struct SettingsView: View {
     @EnvironmentObject var database: DatabaseService
     @EnvironmentObject var proxyServer: ProxyServerService
     @EnvironmentObject var clientInterception: ClientInterceptionService
-    @EnvironmentObject var keyBalance: KeyBalanceService
     
     @State private var showClearConfirmation = false
     @State private var cleanupResult: String? = nil
-    
-    @State private var deepSeekKey: String = ""
-    @State private var openRouterKey: String = ""
 
     var body: some View {
         TabView {
@@ -412,63 +408,5 @@ struct SettingsView: View {
                 .foregroundStyle(.secondary)
         }
     }
-    
-    private var keyBalanceSettings: some View {
-        Form {
-            Section("DeepSeek API Key 余额同步") {
-                SecureField("输入 DeepSeek API Key", text: $deepSeekKey)
-                    .textFieldStyle(.roundedBorder)
-                
-                HStack {
-                    Text("当前余额:")
-                        .foregroundStyle(.secondary)
-                    Text(keyBalance.deepSeekBalance)
-                        .fontWeight(.bold)
-                        .foregroundStyle(keyBalance.deepSeekBalance.contains("CNY") ? .green : .secondary)
-                }
-                
-                Button("保存并测试") {
-                    keyBalance.saveDeepSeekKey(deepSeekKey)
-                }
-            }
-            
-            Section("OpenRouter API Key 余额同步") {
-                SecureField("输入 OpenRouter API Key", text: $openRouterKey)
-                    .textFieldStyle(.roundedBorder)
-                
-                HStack {
-                    Text("当前余额:")
-                        .foregroundStyle(.secondary)
-                    Text(keyBalance.openRouterBalance)
-                        .fontWeight(.bold)
-                        .foregroundStyle(keyBalance.openRouterBalance.contains("$") ? .green : .secondary)
-                }
-                
-                HStack {
-                    Text("累计消费:")
-                        .foregroundStyle(.secondary)
-                    Text(keyBalance.openRouterUsage)
-                }
-                
-                Button("保存并测试") {
-                    keyBalance.saveOpenRouterKey(openRouterKey)
-                }
-            }
-            
-            Section {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("余额告警阈值已预设为 $2.00 / 10 CNY。")
-                    Text("当您的账户余额低于该值时，网关将在系统菜单栏或通过系统通知提醒您。")
-                    Text("所有 API Key 均安全地保存在本地 Keychain 或沙盒内部。")
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
-        }
-        .formStyle(.grouped)
-        .onAppear {
-            deepSeekKey = keyBalance.getDeepSeekKey()
-            openRouterKey = keyBalance.getOpenRouterKey()
-        }
-    }
 }
+

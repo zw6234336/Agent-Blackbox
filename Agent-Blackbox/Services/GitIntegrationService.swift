@@ -1,7 +1,7 @@
 import Foundation
 import Combine
 
-struct GitCommitCost: Identifiable, Hashable {
+struct GitCommitUsage: Identifiable, Hashable {
     var id: String { hash }
     let hash: String
     let author: String
@@ -12,7 +12,7 @@ struct GitCommitCost: Identifiable, Hashable {
 
 @MainActor
 final class GitIntegrationService: ObservableObject {
-    @Published var commitCosts: [GitCommitCost] = []
+    @Published var commitUsages: [GitCommitUsage] = []
     @Published var isScanning = false
     
     private weak var database: DatabaseService?
@@ -27,9 +27,9 @@ final class GitIntegrationService: ObservableObject {
         
         Task.detached {
             let commits = await self.fetchGitCommits(repoPath: repoPath)
-            var computedCosts: [GitCommitCost] = []
+            var computedUsages: [GitCommitUsage] = []
             
-            // Loop through commits and aggregate cost between this commit and the previous one
+            // Loop through commits and aggregate token usage between this commit and the previous one
             for i in 0..<commits.count {
                 let currentCommit = commits[i]
                 let sinceDate: Date
@@ -47,20 +47,20 @@ final class GitIntegrationService: ObservableObject {
                 // Aggregate usage between sinceDate and untilDate
                 let usage = await database.aggregateUsage(provider: nil, since: sinceDate, until: untilDate)
                 
-                var costInfo = currentCommit
-                costInfo.totalTokens = usage.totalTokens
-                computedCosts.append(costInfo)
+                var usageInfo = currentCommit
+                usageInfo.totalTokens = usage.totalTokens
+                computedUsages.append(usageInfo)
             }
             
-            let finalCosts = computedCosts
+            let finalUsages = computedUsages
             await MainActor.run {
-                self.commitCosts = finalCosts
+                self.commitUsages = finalUsages
                 self.isScanning = false
             }
         }
     }
     
-    private func fetchGitCommits(repoPath: String) async -> [GitCommitCost] {
+    private func fetchGitCommits(repoPath: String) async -> [GitCommitUsage] {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
         
@@ -80,7 +80,7 @@ final class GitIntegrationService: ObservableObject {
                 return []
             }
             
-            var list: [GitCommitCost] = []
+            var list: [GitCommitUsage] = []
             let lines = output.components(separatedBy: .newlines)
             
             for line in lines {
@@ -93,7 +93,7 @@ final class GitIntegrationService: ObservableObject {
                 let date = Date(timeIntervalSince1970: timestampSecs)
                 let message = parts[3]
                 
-                list.append(GitCommitCost(
+                list.append(GitCommitUsage(
                     hash: hash,
                     author: author,
                     date: date,

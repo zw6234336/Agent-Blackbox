@@ -6,14 +6,7 @@ struct TokenFlowPoint: Identifiable, Equatable {
     let id = UUID()
     let time: Date
     let tokenCount: Int
-    let cost: Double
     let client: String
-}
-
-enum ChartMetric: String, CaseIterable, Identifiable {
-    case tokens = "Token 吞吐"
-    case cost = "资费消耗"
-    var id: String { rawValue }
 }
 
 enum InspectorTab: String, CaseIterable, Identifiable {
@@ -29,8 +22,6 @@ struct ProxyDashboardView: View {
     @EnvironmentObject var clientInterception: ClientInterceptionService
     @EnvironmentObject var database: DatabaseService
     @EnvironmentObject var desktopWidget: DesktopWidgetService
-    @EnvironmentObject var gitIntegration: GitIntegrationService
-    @EnvironmentObject var keyBalance: KeyBalanceService
     
     @State private var selectedRequest: ProxyRequestLog? = nil
     @State private var isCopying = false
@@ -39,11 +30,8 @@ struct ProxyDashboardView: View {
     @State private var peakRate: Int = 0
     @State private var lastProcessedTime: Date = Date()
     @State private var todayTokens: Int = 0
-    @State private var todayCost: Double = 0.0
-    @State private var localRequestsCount: Int = 0
     
     // New UI State Properties
-    @State private var chartMetric: ChartMetric = .tokens
     @State private var isChartFrozen = false
     @State private var isShowingGuide = false
     @State private var searchText = ""
@@ -113,7 +101,6 @@ struct ProxyDashboardView: View {
                 currentRate = 0
                 peakRate = 0
                 todayTokens = 0
-                todayCost = 0.0
                 lastProcessedTime = Date()
                 initializeChartData()
             }
@@ -307,9 +294,9 @@ struct ProxyDashboardView: View {
                 .background(Color.primary.opacity(0.01))
                 .cornerRadius(10)
             } else {
-                let valueKey = chartMetric == .tokens ? "Tokens" : "费用"
+                let valueKey = "Tokens"
                 Chart(tokenFlowPoints) { point in
-                    let value: Double = chartMetric == .tokens ? Double(point.tokenCount) : point.cost
+                    let value = Double(point.tokenCount)
                     
                     AreaMark(
                         x: .value("时间", point.time),
@@ -362,13 +349,8 @@ struct ProxyDashboardView: View {
     @ViewBuilder
     private func chartYValueLabel(for value: AxisValue) -> some View {
         if let doubleValue = value.as(Double.self) {
-            if chartMetric == .tokens {
-                Text(Int(doubleValue).formattedCompact)
-                    .font(.system(size: 8))
-            } else {
-                Text(String(format: "$%.4f", doubleValue))
-                    .font(.system(size: 8))
-            }
+            Text(Int(doubleValue).formattedCompact)
+                .font(.system(size: 8))
         }
     }
     
@@ -377,13 +359,8 @@ struct ProxyDashboardView: View {
         Task {
             let calendar = Calendar.current
             let startOfDay = calendar.startOfDay(for: Date())
-            async let todayUsage = database.aggregateUsage(provider: nil, since: startOfDay)
-            async let localUsage = database.aggregateUsage(provider: .ollama, since: startOfDay)
-            
-            let (resolvedUsage, resolvedLocal) = await (todayUsage, localUsage)
+            let resolvedUsage = await database.aggregateUsage(provider: nil, since: startOfDay)
             self.todayTokens = resolvedUsage.totalTokens
-            self.todayCost = resolvedUsage.totalCost
-            self.localRequestsCount = resolvedLocal.requestCount
         }
     }
     
@@ -415,11 +392,8 @@ struct ProxyDashboardView: View {
                 let tokensInBin = binRequests.reduce(0) { sum, req in
                     sum + (req.promptTokens ?? 0) + (req.completionTokens ?? 0)
                 }
-                let costInBin = binRequests.reduce(0.0) { sum, req in
-                    sum + (req.estimatedCost ?? 0.0)
-                }
                 
-                points.append(TokenFlowPoint(time: startTime, tokenCount: tokensInBin, cost: costInBin, client: client))
+                points.append(TokenFlowPoint(time: startTime, tokenCount: tokensInBin, client: client))
             }
         }
         
@@ -477,11 +451,8 @@ struct ProxyDashboardView: View {
             let tokensInBin = binRequests.reduce(0) { sum, req in
                 sum + (req.promptTokens ?? 0) + (req.completionTokens ?? 0)
             }
-            let costInBin = binRequests.reduce(0.0) { sum, req in
-                sum + (req.estimatedCost ?? 0.0)
-            }
             
-            newPoints.append(TokenFlowPoint(time: currentTime, tokenCount: tokensInBin, cost: costInBin, client: client))
+            newPoints.append(TokenFlowPoint(time: currentTime, tokenCount: tokensInBin, client: client))
         }
         
         tokenFlowPoints.append(contentsOf: newPoints)
@@ -606,118 +577,9 @@ struct ProxyDashboardView: View {
                     Text("🟢 系统就绪 / 监听中")
                         .font(.system(size: 14, weight: .bold))
                         .foregroundStyle(.green)
-                    Text("网关状态良好。当你的 AI 代理发送数据时，它的连接指标和扣费趋势将实时显示在此。")
-                        .font(.system(size: 9))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(3)
-                }
-            }
-            Spacer()
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, maxHeight: 160)
-        .background(RoundedRectangle(cornerRadius: 12).fill(.ultraThinMaterial))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(runaway != nil ? Color.red.opacity(0.3) : Color.primary.opacity(0.08), lineWidth: 1)
-        )
-    }
-    
-    private var gatewayBudgetCard: some View {
-        let budgetLimit = 5.0
-        
-        // Dynamic projection based on active requests
-        let recentActiveRequests = proxyServer.liveRequests.filter { $0.timestamp >= Date().addingTimeInterval(-300) }
-        let fiveMinCost = recentActiveRequests.reduce(0.0) { $0 + ($1.estimatedCost ?? 0.0) }
-        let projectedDailyCost = todayCost + (fiveMinCost * 12 * 8) // scale up to 8 hours of usage
-        
-        // Sum up local Ollama calls (which are free, but show as saved budget)
-        let savedCost = Double(localRequestsCount) * 0.015 // estimate $0.015 saved per local call
-        
-        return HStack(spacing: 12) {
-            CircularBudgetGauge(cost: todayCost, limit: budgetLimit)
-            
-            VStack(alignment: .leading, spacing: 4) {
-                Text("出网资费预算")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(.secondary)
-                
-                Text("今日用量: \(todayTokens.formattedCompact) Tokens")
-                    .font(.system(size: 9))
-                    .foregroundStyle(.secondary)
-                
-                if savedCost > 0 {
-                    Text("本地节省: $\(String(format: "%.2f", savedCost)) (Ollama)")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(.green)
-                }
-                
-                if fiveMinCost > 0 {
-                    Text("预计日消费: $\(String(format: "%.2f", projectedDailyCost))")
-                        .font(.system(size: 9))
-                        .foregroundStyle(.orange)
-                } else {
-                    Text("消费速率: 暂无")
-                        .font(.system(size: 9))
-                        .foregroundStyle(.secondary)
-                }
-            }
-            Spacer()
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, maxHeight: 160)
-        .background(RoundedRectangle(cornerRadius: 12).fill(.ultraThinMaterial))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.primary.opacity(0.08), lineWidth: 1))
-    }
-    
-    private var keyBalanceCard: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Image(systemName: "key.fill")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                Text("API 账户余额")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(.secondary)
-                
-                Spacer()
-                
-                if keyBalance.isFetching {
-                    ProgressView()
-                        .controlSize(.small)
-                } else {
-                    Button(action: {
-                        Task { await keyBalance.refreshBalances() }
-                    }) {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 8))
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            
-            Spacer()
-            
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text("DeepSeek:")
+                    Text("网关状态良好。")
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
-                    Spacer()
-                    Text(keyBalance.deepSeekBalance)
-                        .font(.system(size: 10, weight: .semibold, design: .rounded))
-                        .foregroundStyle(keyBalance.deepSeekBalance.contains("CNY") ? .green : .primary)
-                }
-                
-                HStack {
-                    Text("OpenRouter:")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Text(keyBalance.openRouterBalance)
-                        .font(.system(size: 10, weight: .semibold, design: .rounded))
-                        .foregroundStyle(keyBalance.openRouterBalance.contains("$") ? .green : .primary)
                 }
             }
         }
@@ -985,28 +847,21 @@ struct ProxyDashboardView: View {
                 .frame(width: 50, alignment: .trailing)
             }
             
-            // Cost & Saved Badge
+            // Latency & Token Badge
             VStack(alignment: .trailing, spacing: 1) {
-                if provider == .ollama {
-                    Text("本地免费")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(.green)
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 1)
-                        .background(Color.green.opacity(0.1))
-                        .cornerRadius(3)
-                } else if let cost = request.estimatedCost {
-                    Text(String(format: "$%.4f", cost))
+                if let duration = request.duration {
+                    Text(duration.formattedDuration)
                         .font(.system(size: 9, weight: .bold).monospacedDigit())
-                        .foregroundStyle(cost > 0.05 ? .orange : .primary)
+                        .foregroundStyle(.primary)
                 } else {
-                    Text("--")
+                    Text("加载中")
                         .font(.system(size: 9))
                         .foregroundStyle(.secondary)
                 }
                 
-                if let duration = request.duration {
-                    Text(duration.formattedDuration)
+                let total = (request.promptTokens ?? 0) + (request.completionTokens ?? 0)
+                if total > 0 {
+                    Text("\(total) T")
                         .font(.system(size: 7).monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
@@ -1094,11 +949,6 @@ struct ProxyDashboardView: View {
                     }
                     if let pt = request.promptTokens, let ct = request.completionTokens {
                         detailMetaRow(label: "总 Token", content: "\(pt + ct) (Input: \(pt) / Output: \(ct))")
-                    }
-                    if let cost = request.estimatedCost {
-                        detailMetaRow(label: "预估资费", content: String(format: "$%.4f", cost))
-                            .foregroundStyle(.green)
-                            .fontWeight(.bold)
                     }
                 }
                 .padding(8)
@@ -1459,128 +1309,7 @@ struct ProxyDashboardView: View {
             }
         }
     }
-    
-    private var gitSection: some View {
-        DisclosureGroup(isExpanded: $isGitExpanded) {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Text("通过抓取最近 10 次 Git 提交，并统计两次提交时间间隔内的网关请求费用，审计每一次代码提交的 AI 成本。")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    
-                    Spacer()
-                    
-                    Button(action: {
-                        gitIntegration.scanCommits(repoPath: "/Users/zhangwei/work/github/Agent-Blackbox")
-                    }) {
-                        Label("扫描成本", systemImage: "arrow.clockwise")
-                            .font(.caption)
-                    }
-                    .buttonStyle(.borderless)
-                    .disabled(gitIntegration.isScanning)
-                }
-                .padding(.top, 4)
-                
-                if gitIntegration.isScanning {
-                    HStack(spacing: 8) {
-                        ProgressView().controlSize(.small)
-                        Text("正在抓取 Git 记录并联立账单...")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.vertical, 12)
-                } else if gitIntegration.commitCosts.isEmpty {
-                    Text("暂无 Git 提交审计数据（点击扫描开始审计）")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .padding(.vertical, 12)
-                } else {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 12) {
-                            ForEach(gitIntegration.commitCosts) { cost in
-                                VStack(alignment: .leading, spacing: 6) {
-                                    HStack {
-                                        Image(systemName: "sourcecontrol")
-                                            .font(.caption)
-                                            .foregroundStyle(.blue)
-                                        Text(String(cost.hash.prefix(7)))
-                                            .font(.system(.caption, design: .monospaced))
-                                            .fontWeight(.bold)
-                                        
-                                        Spacer()
-                                        
-                                        if cost.totalCost > 0 {
-                                            Text(String(format: "$%.4f", cost.totalCost))
-                                                .font(.system(size: 11, weight: .bold, design: .rounded))
-                                                .foregroundStyle(.orange)
-                                        } else {
-                                            Text("免费/本地")
-                                                .font(.system(size: 9))
-                                                .foregroundStyle(.green)
-                                                .padding(.horizontal, 4)
-                                                .padding(.vertical, 1)
-                                                .background(Color.green.opacity(0.1))
-                                                .cornerRadius(3)
-                                        }
-                                    }
-                                    
-                                    Text(cost.message)
-                                        .font(.subheadline)
-                                        .lineLimit(1)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                    
-                                    HStack {
-                                        Text("作者: \(cost.author)")
-                                            .font(.system(size: 8))
-                                            .foregroundStyle(.secondary)
-                                        Spacer()
-                                        Text("\(cost.totalTokens) T")
-                                            .font(.system(size: 8))
-                                            .foregroundStyle(.secondary)
-                                    }
-                                }
-                                .padding(10)
-                                .frame(width: 220, height: 80)
-                                .background(Color.primary.opacity(0.03))
-                                .cornerRadius(8)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .stroke(Color.primary.opacity(0.05), lineWidth: 1)
-                                )
-                            }
-                        }
-                        .padding(.vertical, 4)
-                    }
-                }
-            }
-        } label: {
-            HStack {
-                Label("Git 提交代码资费审计 (Cost-per-Commit)", systemImage: "sourcecontrol")
-                    .font(.headline)
-                
-                if !gitIntegration.commitCosts.isEmpty {
-                    let totalCommitCost = gitIntegration.commitCosts.reduce(0.0) { $0 + $1.totalCost }
-                    Text("累计 AI 成本: $\(String(format: "%.4f", totalCommitCost))")
-                        .font(.system(size: 10, weight: .bold))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.orange.opacity(0.12))
-                        .foregroundStyle(.orange)
-                        .cornerRadius(6)
-                }
-            }
-        }
-        .padding(12)
-        .background(RoundedRectangle(cornerRadius: 12).fill(.ultraThinMaterial))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.primary.opacity(0.08), lineWidth: 1))
-        .onChange(of: isGitExpanded) { oldValue, newValue in
-            if newValue && gitIntegration.commitCosts.isEmpty {
-                gitIntegration.scanCommits(repoPath: "/Users/zhangwei/work/github/Agent-Blackbox")
-            }
-        }
-    }
+
 }
 
 // MARK: - Canvas-based Pulse Wave
@@ -1619,59 +1348,6 @@ struct PulseWaveView: View {
                     style: StrokeStyle(lineWidth: isActive ? 1.5 : 0.8, lineCap: .round)
                 )
             }
-        }
-    }
-}
-
-// MARK: - Circular Cost Progress Gauge
-struct CircularBudgetGauge: View {
-    let cost: Double
-    let limit: Double
-    
-    var percentage: Double {
-        guard limit > 0 else { return 0 }
-        return min(cost / limit, 1.0)
-    }
-    
-    var barColor: Color {
-        if percentage > 0.9 { return .red }
-        if percentage > 0.6 { return .orange }
-        return .green
-    }
-    
-    var body: some View {
-        VStack(spacing: 6) {
-            ZStack {
-                Circle()
-                    .stroke(Color.primary.opacity(0.06), lineWidth: 8)
-                
-                Circle()
-                    .trim(from: 0.0, to: CGFloat(percentage))
-                    .stroke(
-                        AngularGradient(
-                            gradient: Gradient(colors: [barColor.opacity(0.7), barColor]),
-                            center: .center,
-                            startAngle: .degrees(-90),
-                            endAngle: .degrees(360 * percentage - 90)
-                        ),
-                        style: StrokeStyle(lineWidth: 8, lineCap: .round)
-                    )
-                    .rotationEffect(.degrees(-90))
-                    .animation(.spring(response: 0.4, dampingFraction: 0.8), value: percentage)
-                
-                VStack(spacing: 2) {
-                    Text(String(format: "$%.2f", cost))
-                        .font(.system(size: 14, weight: .bold, design: .rounded))
-                    Text("/ $\(String(format: "%.0f", limit))")
-                        .font(.system(size: 8))
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .frame(width: 72, height: 72)
-            
-            Text(String(format: "已用 %.1f%%", percentage * 100))
-                .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(barColor)
         }
     }
 }

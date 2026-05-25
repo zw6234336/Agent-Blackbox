@@ -124,32 +124,6 @@ struct MonitorConfig: Codable, Equatable {
     var enableClaudeCodeInterception: Bool = false
     var enablePiInterception: Bool = false
     
-    /// Token rates per 1K tokens (input, output) in USD
-    /// 来源：各厂商官方定价页（2025-06）
-    var tokenRates: [String: TokenRate] = [
-        // OpenAI — platform.openai.com/docs/models
-        "gpt-4": TokenRate(inputPer1K: 0.03, outputPer1K: 0.06),
-        "gpt-4-turbo": TokenRate(inputPer1K: 0.01, outputPer1K: 0.03),
-        "gpt-4o": TokenRate(inputPer1K: 0.0025, outputPer1K: 0.01),        // $2.50/$10 per 1M（2024-11 新价格）
-        "gpt-4o-mini": TokenRate(inputPer1K: 0.00015, outputPer1K: 0.0006),
-        "gpt-4o-2024-11-20": TokenRate(inputPer1K: 0.0025, outputPer1K: 0.01),
-        "gpt-3.5-turbo": TokenRate(inputPer1K: 0.0005, outputPer1K: 0.0015),
-        // Anthropic — anthropic.com/pricing
-        "claude-3-opus": TokenRate(inputPer1K: 0.015, outputPer1K: 0.075),
-        "claude-3.5-sonnet": TokenRate(inputPer1K: 0.003, outputPer1K: 0.015),
-        "claude-3.5-haiku": TokenRate(inputPer1K: 0.0008, outputPer1K: 0.004),
-        "claude-3-haiku": TokenRate(inputPer1K: 0.00025, outputPer1K: 0.00125),
-        "claude-sonnet-4": TokenRate(inputPer1K: 0.003, outputPer1K: 0.015),
-        "claude-sonnet-4-5": TokenRate(inputPer1K: 0.003, outputPer1K: 0.015),
-        "claude-haiku-4": TokenRate(inputPer1K: 0.0008, outputPer1K: 0.004),
-        "claude-opus-4": TokenRate(inputPer1K: 0.015, outputPer1K: 0.075),
-        // Google Gemini — ai.google.dev/gemini-api/docs/pricing
-        "gemini-pro": TokenRate(inputPer1K: 0.0005, outputPer1K: 0.0015),
-        "gemini-1.5-pro": TokenRate(inputPer1K: 0.00125, outputPer1K: 0.005),
-        "gemini-1.5-flash": TokenRate(inputPer1K: 0.000075, outputPer1K: 0.0003),
-        "gemini-2.0-flash": TokenRate(inputPer1K: 0.0001, outputPer1K: 0.0004),
-        "gemini-2.5-pro": TokenRate(inputPer1K: 0.00125, outputPer1K: 0.01),
-    ]
 
     /// 每个 provider 的限额配置（RPM / TPM / 日预算 / 月预算）
     var providerRateLimits: [String: ProviderRateLimit] = ProviderRateLimit.defaults()
@@ -180,7 +154,6 @@ struct MonitorConfig: Codable, Equatable {
         case enableCursorRooClineInterception
         case enableClaudeCodeInterception
         case enablePiInterception
-        case tokenRates
         case providerRateLimits
         case rateSamplingInterval
     }
@@ -227,43 +200,8 @@ struct MonitorConfig: Codable, Equatable {
         self.enableCursorRooClineInterception = try container.decodeIfPresent(Bool.self, forKey: .enableCursorRooClineInterception) ?? false
         self.enableClaudeCodeInterception = try container.decodeIfPresent(Bool.self, forKey: .enableClaudeCodeInterception) ?? false
         self.enablePiInterception = try container.decodeIfPresent(Bool.self, forKey: .enablePiInterception) ?? false
-        
-        self.tokenRates = try container.decodeIfPresent([String: TokenRate].self, forKey: .tokenRates) ?? [:]
-        if self.tokenRates.isEmpty {
-            self.tokenRates = [
-                "gpt-4": TokenRate(inputPer1K: 0.03, outputPer1K: 0.06),
-                "gpt-4-turbo": TokenRate(inputPer1K: 0.01, outputPer1K: 0.03),
-                "gpt-4o": TokenRate(inputPer1K: 0.0025, outputPer1K: 0.01),
-                "gpt-4o-mini": TokenRate(inputPer1K: 0.00015, outputPer1K: 0.0006),
-                "gpt-4o-2024-11-20": TokenRate(inputPer1K: 0.0025, outputPer1K: 0.01),
-                "gpt-3.5-turbo": TokenRate(inputPer1K: 0.0005, outputPer1K: 0.0015),
-                "claude-3-opus": TokenRate(inputPer1K: 0.015, outputPer1K: 0.075),
-                "claude-3.5-sonnet": TokenRate(inputPer1K: 0.003, outputPer1K: 0.015),
-                "claude-3.5-haiku": TokenRate(inputPer1K: 0.0008, outputPer1K: 0.004),
-                "claude-3-haiku": TokenRate(inputPer1K: 0.00025, outputPer1K: 0.00125),
-                "claude-sonnet-4": TokenRate(inputPer1K: 0.003, outputPer1K: 0.015),
-                "claude-sonnet-4-5": TokenRate(inputPer1K: 0.003, outputPer1K: 0.015),
-                "claude-haiku-4": TokenRate(inputPer1K: 0.0008, outputPer1K: 0.004),
-                "claude-opus-4": TokenRate(inputPer1K: 0.015, outputPer1K: 0.075),
-                "gemini-pro": TokenRate(inputPer1K: 0.0005, outputPer1K: 0.0015),
-                "gemini-1.5-pro": TokenRate(inputPer1K: 0.00125, outputPer1K: 0.005),
-                "gemini-1.5-flash": TokenRate(inputPer1K: 0.000075, outputPer1K: 0.0003),
-                "gemini-2.0-flash": TokenRate(inputPer1K: 0.0001, outputPer1K: 0.0004),
-                "gemini-2.5-pro": TokenRate(inputPer1K: 0.00125, outputPer1K: 0.01)
-            ]
-        }
         self.providerRateLimits = try container.decodeIfPresent([String: ProviderRateLimit].self, forKey: .providerRateLimits) ?? ProviderRateLimit.defaults()
         self.rateSamplingInterval = try container.decodeIfPresent(TimeInterval.self, forKey: .rateSamplingInterval) ?? 5.0
     }
 }
 
-struct TokenRate: Codable, Equatable {
-    let inputPer1K: Double
-    let outputPer1K: Double
-    
-    func estimateCost(promptTokens: Int, completionTokens: Int) -> Double {
-        let inputCost = Double(promptTokens) / 1000.0 * inputPer1K
-        let outputCost = Double(completionTokens) / 1000.0 * outputPer1K
-        return inputCost + outputCost
-    }
-}

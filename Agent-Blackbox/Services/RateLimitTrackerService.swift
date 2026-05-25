@@ -110,16 +110,7 @@ final class RateLimitTrackerService: ObservableObject {
             windows.append(makeWindow(.dailyTokens, used: Double(dayAgg.totalTokens), limit: Double(dTok),
                                       unit: "tok", resetsAt: nextMidnight(now), windowMin: 24 * 60))
         }
-        if let dCost = limit.dailyCostLimit {
-            windows.append(makeWindow(.dailyCost, used: dayAgg.totalCost, limit: dCost,
-                                      unit: "USD", resetsAt: nextMidnight(now), windowMin: 24 * 60))
-        }
-        if let mCost = limit.monthlyCostLimit {
-            let monthEnd = nextMonthStart(now)
-            let monthMins = Int(monthEnd.timeIntervalSince(monthStart) / 60)
-            windows.append(makeWindow(.monthlyCost, used: monthAgg.totalCost, limit: mCost,
-                                      unit: "USD", resetsAt: monthEnd, windowMin: monthMins))
-        }
+
         // 5 小时请求窗口（Kimi 等消费套餐的滑动窗口）
         if let req5h = limit.fiveHourRequestLimit {
             let fiveHourAgo = now.addingTimeInterval(-5 * 3600)
@@ -138,9 +129,8 @@ final class RateLimitTrackerService: ObservableObject {
         // 并发：扫描 logs1h，按 [t, t+duration] 区间扫线求最大重叠
         let concurrency = computeConcurrency(logs: logs1h, now: now)
 
-        // 节奏：取主窗口（优先 dailyCost > dailyTokens > tokens1h > requests1h > tpm > rpm）
-        let primary = windows.first(where: { $0.kind == .dailyCost })
-            ?? windows.first(where: { $0.kind == .dailyTokens })
+        // 节奏：取主窗口（优先 dailyTokens > tokens1h > requests1h > tpm > rpm）
+        let primary = windows.first(where: { $0.kind == .dailyTokens })
             ?? windows.first(where: { $0.kind == .tokens1h })
             ?? windows.first(where: { $0.kind == .requests1h })
             ?? windows.first(where: { $0.kind == .tpm1m })
@@ -166,7 +156,6 @@ final class RateLimitTrackerService: ObservableObject {
             pace: pace,
             totalCalls1h: req1h,
             totalTokens1h: tok1h,
-            totalCost24h: dayAgg.totalCost,
             updatedAt: now
         )
     }
@@ -251,8 +240,6 @@ final class RateLimitTrackerService: ObservableObject {
             requestsPerHourLimit: sum(\.requestsPerHourLimit),
             tokensPerHourLimit: sum(\.tokensPerHourLimit),
             dailyTokenLimit: sum(\.dailyTokenLimit),
-            dailyCostLimit: sum(\.dailyCostLimit),
-            monthlyCostLimit: sum(\.monthlyCostLimit),
             monthlyRequestLimit: sum(\.monthlyRequestLimit),
             fiveHourRequestLimit: sum(\.fiveHourRequestLimit)
         )

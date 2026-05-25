@@ -480,7 +480,6 @@ final class CompilationService: ObservableObject {
             let promptTokensCol = SQLite.Expression<Int?>("prompt_tokens")
             let completionTokensCol = SQLite.Expression<Int?>("completion_tokens")
             let totalTokensCol = SQLite.Expression<Int?>("total_tokens")
-            let estimatedCostCol = SQLite.Expression<Double?>("estimated_cost")
             let durationCol = SQLite.Expression<Double?>("duration")
             let statusCodeCol = SQLite.Expression<Int?>("status_code")
             let errorMessageCol = SQLite.Expression<String?>("error_message")

@@ -148,7 +148,7 @@ struct DesktopWidgetView: View {
         let calendar = Calendar.current
         let startOfDay = calendar.startOfDay(for: now)
         
-        // Sum cost from liveRequests for today (fallback aggregation)
+        // Sum tokens from liveRequests for today (fallback aggregation)
         let todayRequests = proxyServer.liveRequests.filter { 
             $0.timestamp >= startOfDay 
         }

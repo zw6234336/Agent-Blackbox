@@ -30,7 +30,7 @@ struct ClineParser: LogParser {
             modelName = firstUsage["model_id"] as? String
         }
         
-        // 2. Try to read token usage, cost, and timestamp from taskHistory.json
+        // 2. Try to read token usage and timestamp from taskHistory.json
         let globalStorageDir = taskDir.deletingLastPathComponent().deletingLastPathComponent()
         let taskHistoryURL = globalStorageDir.appendingPathComponent("state").appendingPathComponent("taskHistory.json")
         
@@ -54,7 +54,7 @@ struct ClineParser: LogParser {
         let fileDate = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
         let baseTimestamp = taskTimestamp ?? folderTimestamp ?? fileDate ?? Date()
         
-        // Identify the last assistant message to avoid double-counting tokens and costs
+        // Identify the last assistant message to avoid double-counting tokens
         var lastAssistantIndex = -1
         for (index, msg) in array.enumerated() {
             if (msg["role"] as? String) == "assistant" {

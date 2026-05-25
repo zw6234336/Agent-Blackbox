@@ -9,6 +9,7 @@ final class DatabaseService: ObservableObject {
     @Published private(set) var bookmarkedCount: Int = 0
     @Published var collections: [LogCollection] = []
     @Published var dashboardStats: DashboardStats = DashboardStats()
+    private var lastDashboardDays: Int? = 0
 
     private var db: Connection?
 
@@ -490,8 +491,16 @@ final class DatabaseService: ObservableObject {
 
     // MARK: - Dashboard Statistics
 
-    func refreshDashboardStats(days: Int? = 7) {
+    func refreshDashboardStats(days: Int? = nil) {
         guard let dbConnection = self.db else { return }
+
+        let daysToUse: Int?
+        if let days = days {
+            self.lastDashboardDays = days
+            daysToUse = days
+        } else {
+            daysToUse = self.lastDashboardDays
+        }
 
         DispatchQueue.global(qos: .userInitiated).async {
             var stats = DashboardStats()
@@ -499,7 +508,7 @@ final class DatabaseService: ObservableObject {
             do {
                 let filterTable: Table
                 let startTimestamp: Double?
-                if let days = days {
+                if let days = daysToUse {
                     let limitDate: Double
                     if days == 0 {
                         limitDate = Calendar.current.startOfDay(for: Date()).timeIntervalSince1970
@@ -578,30 +587,43 @@ final class DatabaseService: ObservableObject {
                     }
                 }
 
-                // Tokens by day
-                let daysLimit = days ?? 90
+                // Tokens by day / hour
+                let daysLimit = daysToUse ?? 90
                 let limitVal: Double
+                let dayQuery: String
+                let formatter = DateFormatter()
+                
                 if daysLimit == 0 {
                     limitVal = Calendar.current.startOfDay(for: Date()).timeIntervalSince1970
+                    dayQuery = """
+                        SELECT strftime('%Y-%m-%d %H:00:00', timestamp, 'unixepoch', 'localtime') as hour_bucket,
+                               COALESCE(SUM(prompt_tokens), 0) as pt,
+                               COALESCE(SUM(completion_tokens), 0) as ct
+                        FROM logs
+                        WHERE timestamp >= \(limitVal)
+                        GROUP BY hour_bucket
+                        ORDER BY hour_bucket ASC
+                    """
+                    formatter.dateFormat = "yyyy-MM-dd HH:00:00"
                 } else {
                     limitVal = Date().addingTimeInterval(-Double(daysLimit) * 24 * 3600).timeIntervalSince1970
+                    dayQuery = """
+                        SELECT date(timestamp, 'unixepoch', 'localtime') as day_bucket,
+                               COALESCE(SUM(prompt_tokens), 0) as pt,
+                               COALESCE(SUM(completion_tokens), 0) as ct
+                        FROM logs
+                        WHERE timestamp >= \(limitVal)
+                        GROUP BY day_bucket
+                        ORDER BY day_bucket ASC
+                    """
+                    formatter.dateFormat = "yyyy-MM-dd"
                 }
-                let dayQuery = """
-                    SELECT date(timestamp, 'unixepoch', 'localtime') as day,
-                           COALESCE(SUM(prompt_tokens), 0) as pt,
-                           COALESCE(SUM(completion_tokens), 0) as ct
-                    FROM logs
-                    WHERE timestamp >= \(limitVal)
-                    GROUP BY day
-                    ORDER BY day ASC
-                """
-                let formatter = DateFormatter()
-                formatter.dateFormat = "yyyy-MM-dd"
+                
                 for row in try dbConnection.prepare(dayQuery) {
-                    if let dayStr = row[0] as? String,
+                    if let bucketStr = row[0] as? String,
                        let pt = row[1] as? Int64,
                        let ct = row[2] as? Int64 {
-                        if let date = formatter.date(from: dayStr) {
+                        if let date = formatter.date(from: bucketStr) {
                             stats.tokensByDay.append(DayTokens(
                                 date: date,
                                 promptTokens: Int(pt),
@@ -663,7 +685,7 @@ final class DatabaseService: ObservableObject {
         }
     }
 
-    /// 区间内的聚合（请求数 / token / cost / 平均时长），不分 provider 也支持
+    /// 区间内的聚合（请求数 / token / 平均时长），不分 provider 也支持
     struct UsageAggregate {
         var requestCount: Int = 0
         var totalTokens: Int = 0
