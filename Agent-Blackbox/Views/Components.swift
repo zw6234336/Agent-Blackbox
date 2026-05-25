@@ -127,6 +127,11 @@ struct FilterChip: View {
 struct AppKitTextField: NSViewRepresentable {
     final class Coordinator: NSObject, NSTextFieldDelegate {
         var parent: AppKitTextField
+        // Tracks the previous value of `shouldFocus` so we only request focus
+        // on the false → true transition. Without this, every SwiftUI re-render
+        // (triggered by typing in any field) would re-call makeFirstResponder
+        // and steal focus from other text fields in the same sheet.
+        var lastShouldFocus: Bool = false
 
         init(parent: AppKitTextField) {
             self.parent = parent
@@ -170,17 +175,26 @@ struct AppKitTextField: NSViewRepresentable {
     func updateNSView(_ nsView: NSTextField, context: Context) {
         context.coordinator.parent = self
 
-        if nsView.stringValue != text {
+        // Only overwrite stringValue if the underlying value really differs.
+        // Avoid touching it while the field editor is active, because
+        // assigning stringValue resets the cursor / selection.
+        if nsView.stringValue != text && nsView.currentEditor() == nil {
             nsView.stringValue = text
         }
 
         nsView.placeholderString = placeholder
 
-        if shouldFocus,
-           let window = nsView.window,
-           window.firstResponder !== nsView.currentEditor() {
+        // Request focus only on the false → true transition of `shouldFocus`,
+        // never on every re-render. Otherwise typing in any sibling field would
+        // immediately yank focus back here.
+        let prev = context.coordinator.lastShouldFocus
+        context.coordinator.lastShouldFocus = shouldFocus
+        if shouldFocus && !prev {
             DispatchQueue.main.async {
-                window.makeFirstResponder(nsView)
+                guard let window = nsView.window else { return }
+                if window.firstResponder !== nsView.currentEditor() {
+                    window.makeFirstResponder(nsView)
+                }
             }
         }
     }

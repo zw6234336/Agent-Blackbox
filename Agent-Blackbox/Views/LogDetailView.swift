@@ -25,12 +25,12 @@ struct LogDetailView: View {
 
                 // Prompt
                 if let prompt = log.prompt {
-                    contentSection(title: "Prompt", content: prompt, icon: "text.bubble", color: .infoBlue)
+                    LogContentSectionView(title: "Prompt", content: prompt, icon: "text.bubble", color: .infoBlue)
                 }
 
                 // Response
                 if let response = log.response {
-                    contentSection(title: "Response", content: response, icon: "text.bubble.fill", color: .successGreen)
+                    LogContentSectionView(title: "Response", content: response, icon: "text.bubble.fill", color: .successGreen)
                 }
 
                 // Error
@@ -198,34 +198,58 @@ struct LogDetailView: View {
     }
     
     // MARK: - Content Section
-    
-    private func contentSection(title: String, content: String, icon: String, color: Color) -> some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Label(title, systemImage: icon)
-                        .font(.headline)
-                        .foregroundStyle(color)
-                    
-                    Spacer()
-                    
-                    Button(action: {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(content, forType: .string)
-                    }) {
-                        Image(systemName: "doc.on.doc")
-                            .font(.caption)
+
+    struct LogContentSectionView: View {
+        let title: String
+        let content: String
+        let icon: String
+        let color: Color
+        
+        @State private var isCopied = false
+        
+        var body: some View {
+            GroupBox {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Label(title, systemImage: icon)
+                            .font(.headline)
+                            .foregroundStyle(color)
+                        
+                        Spacer()
+                        
+                        Button(action: {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(content, forType: .string)
+                            isCopied = true
+                            
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                                isCopied = false
+                            }
+                        }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
+                                    .font(.caption)
+                                    .foregroundStyle(isCopied ? .green : .secondary)
+                                if isCopied {
+                                    Text("已复制")
+                                        .font(.caption2)
+                                        .foregroundStyle(.green)
+                                }
+                            }
+                            .padding(4)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .help("复制")
                     }
-                    .buttonStyle(.plain)
-                    .help("复制")
+                    
+                    Text(content)
+                        .font(.system(.body, design: .monospaced))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(8)
+                        .background(Color.primary.opacity(0.03))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
                 }
-                
-                Text(content)
-                    .font(.system(.body, design: .monospaced))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(8)
-                    .background(Color.primary.opacity(0.03))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
             }
         }
     }
