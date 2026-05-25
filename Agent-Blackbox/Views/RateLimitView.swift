@@ -1080,6 +1080,8 @@ struct RateLimitEditor: View {
     @State private var rphStr: String = ""
     @State private var tphStr: String = ""
     @State private var dTokStr: String = ""
+    @State private var req5hStr: String = ""
+    @State private var mReqStr: String = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -1102,6 +1104,8 @@ struct RateLimitEditor: View {
                 }
                 Section("配额预算") {
                     field("每日 token 上限",         $dTokStr, placeholder: "如 5000000")
+                    field("5 小时请求数上限",         $req5hStr, placeholder: "如 50 (Claude Pro)")
+                    field("月度请求数上限",          $mReqStr, placeholder: "如 300 (Copilot Pro)")
                 }
             }
             .formStyle(.grouped)
@@ -1129,6 +1133,8 @@ struct RateLimitEditor: View {
         rphStr = current.requestsPerHourLimit.map(String.init) ?? ""
         tphStr = current.tokensPerHourLimit.map(String.init) ?? ""
         dTokStr = current.dailyTokenLimit.map(String.init) ?? ""
+        req5hStr = current.fiveHourRequestLimit.map(String.init) ?? ""
+        mReqStr = current.monthlyRequestLimit.map(String.init) ?? ""
     }
 
     private func save() {
@@ -1137,7 +1143,9 @@ struct RateLimitEditor: View {
             tpmLimit: Int(tpmStr),
             requestsPerHourLimit: Int(rphStr),
             tokensPerHourLimit: Int(tphStr),
-            dailyTokenLimit: Int(dTokStr)
+            dailyTokenLimit: Int(dTokStr),
+            monthlyRequestLimit: Int(mReqStr),
+            fiveHourRequestLimit: Int(req5hStr)
         )
         configService.config.providerRateLimits[provider.rawValue] = new
         configService.save()

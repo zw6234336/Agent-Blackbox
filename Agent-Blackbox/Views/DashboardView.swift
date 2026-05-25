@@ -540,25 +540,21 @@ struct DashboardView: View {
                                 .frame(width: 110, height: 110)
                                 .padding(.leading, 4)
 
-                            ScrollView {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    ForEach(data) { item in
-                                        legendRow(item: item)
-                                    }
+                            VStack(alignment: .leading, spacing: 4) {
+                                ForEach(data.prefix(5)) { item in
+                                    legendRow(item: item)
                                 }
-                                .padding(.trailing, 2)
                             }
+                            .padding(.trailing, 2)
                         }
                         .frame(height: 110)
                     } else {
-                        ScrollView {
-                            VStack(spacing: 5) {
-                                ForEach(data) { item in
-                                    providerBarRow(item: item)
-                                }
+                        VStack(spacing: 5) {
+                            ForEach(data.prefix(4)) { item in
+                                providerBarRow(item: item)
                             }
-                            .padding(.trailing, 4)
                         }
+                        .padding(.trailing, 4)
                         .frame(height: 110)
                     }
 
@@ -816,21 +812,17 @@ struct DashboardView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
-                    ScrollView {
-                        LazyVStack(spacing: 10) {
-                            ForEach(Array(modelData.enumerated()), id: \.element.id) { index, item in
-                                ModelRankingRow(
-                                    rank: index + 1,
-                                    item: item,
-                                    maxCount: maxCount,
-                                    totalCalls: totalCalls
-                                )
-                            }
+                    VStack(spacing: 10) {
+                        ForEach(Array(modelData.prefix(6).enumerated()), id: \.element.id) { index, item in
+                            ModelRankingRow(
+                                rank: index + 1,
+                                item: item,
+                                maxCount: maxCount,
+                                totalCalls: totalCalls
+                            )
                         }
-                        .padding(.bottom, 4)
                     }
-                    .frame(maxHeight: 320)
-                    .scrollBounceBehavior(.basedOnSize)
+                    .padding(.bottom, 4)
                 }
             }
         }
@@ -861,18 +853,14 @@ struct DashboardView: View {
             if stats.recentLogs.isEmpty {
                 emptyChartPlaceholder("暂无日志")
             } else {
-                ScrollView {
-                    LazyVStack(spacing: 8) {
-                        ForEach(stats.recentLogs) { log in
-                            LiveFeedRow(log: log) {
-                                selectedLogForDetail = log
-                            }
+                VStack(spacing: 8) {
+                    ForEach(stats.recentLogs.prefix(6)) { log in
+                        LiveFeedRow(log: log) {
+                            selectedLogForDetail = log
                         }
                     }
-                    .padding(.bottom, 4)
                 }
-                .frame(maxHeight: 320)
-                .scrollBounceBehavior(.basedOnSize)
+                .padding(.bottom, 4)
             }
         }
         .frame(minWidth: 320)

@@ -47,10 +47,12 @@ final class PlanDetectionService: ObservableObject {
         async let copilot = detectCopilot()
         async let cursor  = detectCursor()
         async let claude  = detectClaudeDesktop()
+        async let claudeCode = detectClaudeCode()
 
         if let plan = await copilot { results[.copilot]       = plan }
         if let plan = await cursor  { results[.cursor]        = plan }
         if let plan = await claude  { results[.claudeDesktop] = plan }
+        if let plan = await claudeCode { results[.anthropic]   = plan }
 
         detectedPlans = results
         lastDetectedAt = Date()
@@ -542,5 +544,39 @@ final class PlanDetectionService: ObservableObject {
             source: "本地应用",
             detectedAt: Date()
         )
+    }
+
+    private func detectClaudeCode() async -> DetectedPlan? {
+        let settingsPath = NSHomeDirectory() + "/.claude/settings.json"
+        guard FileManager.default.fileExists(atPath: settingsPath) else { return nil }
+        
+        do {
+            let data = try Data(contentsOf: URL(fileURLWithPath: settingsPath))
+            if let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let env = obj["env"] as? [String: Any],
+               let token = env["ANTHROPIC_AUTH_TOKEN"] as? String, !token.isEmpty {
+                
+                if token.hasPrefix("sk-ant-") {
+                    return DetectedPlan(
+                        provider: .anthropic,
+                        planName: "Claude Code (API Key 模式)",
+                        rateLimit: ProviderRateLimit.defaultAnthropicTier1,
+                        source: "Claude Code 配置",
+                        detectedAt: Date()
+                    )
+                } else {
+                    return DetectedPlan(
+                        provider: .anthropic,
+                        planName: "Claude Pro (订阅会员)",
+                        rateLimit: ProviderRateLimit.defaultClaudePro,
+                        source: "Claude Code 凭证",
+                        detectedAt: Date()
+                    )
+                }
+            }
+        } catch {
+            Logger.shared.info("Claude Code 检测: 读取 settings.json 失败: \(error.localizedDescription)")
+        }
+        return nil
     }
 }

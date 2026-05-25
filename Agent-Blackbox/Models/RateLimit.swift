@@ -241,6 +241,18 @@ struct ProviderRateLimit: Codable, Hashable {
         dailyTokenLimit: nil
     )
 
+    /// Claude Pro (订阅会员) 网页/客户端消费套餐
+    /// 5小时50次限制
+    static let defaultClaudePro = ProviderRateLimit(
+        rpmLimit: nil,
+        tpmLimit: nil,
+        requestsPerHourLimit: nil,
+        tokensPerHourLimit: nil,
+        dailyTokenLimit: nil,
+        monthlyRequestLimit: nil,
+        fiveHourRequestLimit: 50
+    )
+
     /// 本地模型（Ollama / LM Studio）：理论无限制，仅监控吞吐
     static let defaultLocal = ProviderRateLimit(
         rpmLimit: nil,
