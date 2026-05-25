@@ -2,7 +2,9 @@ import SwiftUI
 
 struct LogDetailView: View {
     let log: ParsedLog
+    var isModal: Bool = false
     @EnvironmentObject var database: DatabaseService
+    @Environment(\.dismiss) private var dismiss
     @State private var editingNotes = false
     @State private var notesText = ""
     @State private var newTag = ""
@@ -124,6 +126,18 @@ struct LogDetailView: View {
                         .font(.title3)
                 }
                 .help("添加到收藏夹")
+
+                if isModal {
+                    Button(action: {
+                        dismiss()
+                    }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.title2)
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("关闭")
+                }
             }
         }
     }

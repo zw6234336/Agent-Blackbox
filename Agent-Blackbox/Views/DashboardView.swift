@@ -61,7 +61,7 @@ struct DashboardView: View {
         }
         .background(Color.dashboardBackground)
         .sheet(item: $selectedLogForDetail) { log in
-            LogDetailView(log: log)
+            LogDetailView(log: log, isModal: true)
                 .environmentObject(database)
                 .frame(minWidth: 600, minHeight: 650)
         }

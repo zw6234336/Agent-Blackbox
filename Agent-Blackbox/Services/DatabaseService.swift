@@ -1,5 +1,5 @@
 import Foundation
-import SQLite
+@preconcurrency import SQLite
 
 @MainActor
 final class DatabaseService: ObservableObject {
@@ -11,7 +11,7 @@ final class DatabaseService: ObservableObject {
     @Published var dashboardStats: DashboardStats = DashboardStats()
     private var lastDashboardDays: Int? = 0
 
-    private var db: Connection?
+    nonisolated(unsafe) private var db: Connection?
 
     // MARK: - Table Definitions
     private let logsTable = Table("logs")
