@@ -11,7 +11,6 @@ struct ParsedLog: Identifiable, Codable, Hashable {
     let promptTokens: Int?
     let completionTokens: Int?
     let totalTokens: Int?
-    let estimatedCost: Double?
     let duration: TimeInterval?
     let statusCode: Int?
     let errorMessage: String?
@@ -32,7 +31,6 @@ struct ParsedLog: Identifiable, Codable, Hashable {
         promptTokens: Int? = nil,
         completionTokens: Int? = nil,
         totalTokens: Int? = nil,
-        estimatedCost: Double? = nil,
         duration: TimeInterval? = nil,
         statusCode: Int? = nil,
         errorMessage: String? = nil,
@@ -57,7 +55,6 @@ struct ParsedLog: Identifiable, Codable, Hashable {
         self.promptTokens = promptTokens
         self.completionTokens = completionTokens
         self.totalTokens = totalTokens
-        self.estimatedCost = estimatedCost
         self.duration = duration
         self.statusCode = statusCode
         self.errorMessage = errorMessage

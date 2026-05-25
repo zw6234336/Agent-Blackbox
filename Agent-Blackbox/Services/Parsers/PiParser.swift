@@ -243,7 +243,6 @@ struct PiParser: LogParser {
                 let completionTokens = msg["completion_tokens"] as? Int ?? msg["outputTokens"] as? Int
                 let tokenSum = (promptTokens ?? 0) + (completionTokens ?? 0)
                 let totalTokens: Int? = tokenSum > 0 ? tokenSum : nil
-                let cost = estimateCost(model: model, promptTokens: promptTokens, completionTokens: completionTokens)
 
                 results.append(ParsedLog(
                     timestamp: pendingTimestamp ?? timestamp ?? Date(),
@@ -255,7 +254,6 @@ struct PiParser: LogParser {
                     promptTokens: promptTokens ?? estimateTokenCount(pendingUserPrompt),
                     completionTokens: completionTokens ?? estimateTokenCount(msgContent),
                     totalTokens: totalTokens,
-                    estimatedCost: cost,
                     conversationId: convId,
                     metadata: ["format": "pi_conversation", "client": "pi"]
                 ))
@@ -287,8 +285,6 @@ struct PiParser: LogParser {
         let completionTokens = usage?["completion_tokens"] as? Int
         let totalTokens = usage?["total_tokens"] as? Int
             ?? (promptTokens ?? 0) + (completionTokens ?? 0)
-        let cost = estimateCost(model: model, promptTokens: promptTokens, completionTokens: completionTokens)
-
         let timestamp: Date = {
             if let created = obj["created"] as? Double {
                 return Date(timeIntervalSince1970: created)
@@ -309,7 +305,6 @@ struct PiParser: LogParser {
             promptTokens: promptTokens,
             completionTokens: completionTokens,
             totalTokens: totalTokens > 0 ? totalTokens : nil,
-            estimatedCost: cost,
             errorMessage: maskAPIKey(errorMessage),
             metadata: ["format": "pi_chat_completion", "client": "pi"]
         )]
@@ -371,28 +366,7 @@ struct PiParser: LogParser {
         return max(1, count / 4)
     }
 
-    /// 估算 Pi API 调用成本（Inflection API 定价）
-    private func estimateCost(model: String?, promptTokens: Int?, completionTokens: Int?) -> Double? {
-        guard let pt = promptTokens, let ct = completionTokens else { return nil }
-        let modelLower = model?.lowercased() ?? ""
 
-        // Inflection-3 定价（估算）: $2/M input, $8/M output
-        let inputPer1K: Double
-        let outputPer1K: Double
-
-        if modelLower.contains("inflection-3") {
-            inputPer1K = 0.002
-            outputPer1K = 0.008
-        } else if modelLower.contains("inflection-2.5") {
-            inputPer1K = 0.001
-            outputPer1K = 0.004
-        } else {
-            inputPer1K = 0.002
-            outputPer1K = 0.008
-        }
-
-        return Double(pt) / 1000.0 * inputPer1K + Double(ct) / 1000.0 * outputPer1K
-    }
 
     private func parseDurationString(_ s: String) -> TimeInterval? {
         let trimmed = s.trimmingCharacters(in: .whitespaces)

@@ -128,7 +128,7 @@ struct AntigravityParser: LogParser {
                 }
                 
                 if stepContent.contains("<USER_SETTINGS_CHANGE>") {
-                    if let modelMatch = firstMatch(in: stepContent, pattern: #"Model Selection` from .* to ([^.\n`]+)"#) {
+                    if let modelMatch = firstMatch(in: stepContent, pattern: #"Model Selection` from .*? to ([^`\n]+?)(?:\.\s|\.$|$)"#) {
                         currentModelName = modelMatch.trimmingCharacters(in: .whitespacesAndNewlines)
                     }
                 }
@@ -185,10 +185,7 @@ struct AntigravityParser: LogParser {
                 let estimatedCompletionTokens = max(1, responseLength / 4)
                 let totalTokens = estimatedPromptTokens + estimatedCompletionTokens
                 
-                // Estimate Cost
                 let provider = providerFor(model: stepModelName)
-                let estimatedCost = estimateCostFor(model: stepModelName, promptTokens: estimatedPromptTokens, completionTokens: estimatedCompletionTokens)
-                
                 let errorMessage = obj["status"] as? String == "ERROR" ? (obj["error"] as? String ?? "Error occurred during step execution") : nil
                 
                 results.append(ParsedLog(
@@ -201,7 +198,6 @@ struct AntigravityParser: LogParser {
                     promptTokens: estimatedPromptTokens,
                     completionTokens: estimatedCompletionTokens,
                     totalTokens: totalTokens,
-                    estimatedCost: estimatedCost,
                     errorMessage: errorMessage,
                     conversationId: conversationId,
                     metadata: [
@@ -232,45 +228,7 @@ struct AntigravityParser: LogParser {
         return clean.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private func estimateCostFor(model: String, promptTokens: Int, completionTokens: Int) -> Double {
-        let modelLower = model.lowercased()
-        
-        var inputPer1K = 0.0005
-        var outputPer1K = 0.0015
-        
-        if modelLower.contains("gpt-4o-mini") {
-            inputPer1K = 0.00015
-            outputPer1K = 0.0006
-        } else if modelLower.contains("gpt-4o") {
-            inputPer1K = 0.005
-            outputPer1K = 0.015
-        } else if modelLower.contains("gpt-4-turbo") {
-            inputPer1K = 0.01
-            outputPer1K = 0.03
-        } else if modelLower.contains("gpt-4") {
-            inputPer1K = 0.03
-            outputPer1K = 0.06
-        } else if modelLower.contains("claude-3-opus") || modelLower.contains("claude-opus") {
-            inputPer1K = 0.015
-            outputPer1K = 0.075
-        } else if modelLower.contains("claude-3.5-sonnet") || modelLower.contains("claude-sonnet") {
-            inputPer1K = 0.003
-            outputPer1K = 0.015
-        } else if modelLower.contains("claude-3-haiku") || modelLower.contains("claude-haiku") {
-            inputPer1K = 0.00025
-            outputPer1K = 0.00125
-        } else if modelLower.contains("gemini-1.5-flash") || modelLower.contains("flash") {
-            inputPer1K = 0.000075
-            outputPer1K = 0.0003
-        } else if modelLower.contains("gemini-1.5-pro") || modelLower.contains("pro") {
-            inputPer1K = 0.00125
-            outputPer1K = 0.005
-        }
-        
-        let inputCost = Double(promptTokens) / 1000.0 * inputPer1K
-        let outputCost = Double(completionTokens) / 1000.0 * outputPer1K
-        return inputCost + outputCost
-    }
+
 
     // MARK: - Timestamp Parsing
 

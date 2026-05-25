@@ -476,11 +476,11 @@ final class PlanDetectionService: ObservableObject {
                         ?? obj["subscriptionType"]   as? String
                         ?? "pro").lowercased()
 
-            let (planName, costLimit) = cursorPlanInfo(plan: planStr)
+            let planName = cursorPlanInfo(plan: planStr)
             return DetectedPlan(
                 provider: .cursor,
                 planName: planName,
-                rateLimit: ProviderRateLimit(monthlyCostLimit: costLimit),
+                rateLimit: ProviderRateLimit.defaultCursorPro,
                 source: "Cursor API",
                 detectedAt: Date()
             )
@@ -497,14 +497,14 @@ final class PlanDetectionService: ObservableObject {
         )
     }
 
-    private func cursorPlanInfo(plan: String) -> (String, Double?) {
+    private func cursorPlanInfo(plan: String) -> String {
         switch plan {
-        case "pro":                        return ("Cursor Pro",      20.0)
-        case "pro_plus", "pro+":           return ("Cursor Pro+",     40.0)
-        case "ultra":                      return ("Cursor Ultra",   200.0)
-        case "free", "hobby", "starter":   return ("Cursor Free",     nil)
-        case "business", "team":           return ("Cursor Business", nil)
-        default:                           return ("Cursor Pro",      20.0)
+        case "pro":                        return "Cursor Pro"
+        case "pro_plus", "pro+":           return "Cursor Pro+"
+        case "ultra":                      return "Cursor Ultra"
+        case "free", "hobby", "starter":   return "Cursor Free"
+        case "business", "team":           return "Cursor Business"
+        default:                           return "Cursor Pro"
         }
     }
 

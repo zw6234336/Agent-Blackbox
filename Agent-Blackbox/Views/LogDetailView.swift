@@ -164,16 +164,6 @@ struct LogDetailView: View {
                 if let total = log.totalTokens {
                     tokenMetric(label: "总计", value: total, color: .primary)
                 }
-                if let cost = log.estimatedCost {
-                    VStack {
-                        Text(cost.formattedCurrency)
-                            .font(.system(size: 20, weight: .bold, design: .rounded))
-                            .foregroundStyle(Color.successGreen)
-                        Text("预估费用")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
             }
             .frame(maxWidth: .infinity)
         }

@@ -5,7 +5,6 @@ struct DashboardStats {
     var totalTokens: Int = 0
     var totalPromptTokens: Int = 0
     var totalCompletionTokens: Int = 0
-    var totalCost: Double = 0.0
     var errorCount: Int = 0
     var avgResponseTime: Double = 0.0
     var callsByProvider: [LLMProvider: Int] = [:]
@@ -13,6 +12,10 @@ struct DashboardStats {
     var callsByModel: [String: Int] = [:]
     var tokensByDay: [DayTokens] = []
     var recentLogs: [ParsedLog] = []
+    
+    var slowestLog: ParsedLog? = nil
+    var largestPayloadLog: ParsedLog? = nil
+    var localCallsCount: Int = 0
     
     var errorRate: Double {
         guard totalCalls > 0 else { return 0 }
@@ -39,7 +42,6 @@ struct ProviderStat: Identifiable, Hashable {
     let provider: LLMProvider
     let count: Int
     let tokens: Int
-    let cost: Double
     let avgDuration: Double
 }
 

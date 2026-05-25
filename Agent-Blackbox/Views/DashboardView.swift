@@ -1,9 +1,20 @@
 import SwiftUI
 import Charts
 
+enum DashboardTimeRange: String, CaseIterable {
+    case today = "当天"
+    case week = "7天"
+    case month = "30天"
+    case all = "全部"
+}
+
 struct DashboardView: View {
     @EnvironmentObject var database: DatabaseService
-    @State private var timeRange: TimeRange = .week
+    @EnvironmentObject var proxyServer: ProxyServerService
+    @EnvironmentObject var clientInterception: ClientInterceptionService
+
+    @AppStorage("dashboardTimeRange") private var timeRange: DashboardTimeRange = .today
+    @State private var selectedLogForDetail: ParsedLog? = nil
     @State private var isRefreshing = false
 
     enum DistributionViewMode: String, CaseIterable, Identifiable {
@@ -12,21 +23,8 @@ struct DashboardView: View {
         var id: String { self.rawValue }
     }
 
-    enum MetricType: String, CaseIterable, Identifiable {
-        case calls = "次数"
-        case cost = "费用"
-        var id: String { self.rawValue }
-    }
-
     @State private var viewMode: DistributionViewMode = .donut
-    @State private var metricType: MetricType = .calls
     @State private var selectedProvider: LLMProvider? = nil
-
-    enum TimeRange: String, CaseIterable {
-        case week = "7天"
-        case month = "30天"
-        case all = "全部"
-    }
 
     var stats: DashboardStats { database.dashboardStats }
 
@@ -36,8 +34,14 @@ struct DashboardView: View {
                 // Header with refresh
                 headerSection
 
-                // Top metric cards
+                // Safety Interception Status Center
+                safetyGuardBanner
+
+                // Redesigned Top metrics grid (focus on costs and savings)
                 metricsGrid
+
+                // Anomaly & Heavyweight Spotlights (vulnerabilities slowest/heaviest)
+                performanceSpotlightRow
 
                 // Charts row
                 HStack(spacing: 16) {
@@ -56,6 +60,11 @@ struct DashboardView: View {
             .padding(20)
         }
         .background(Color.dashboardBackground)
+        .sheet(item: $selectedLogForDetail) { log in
+            LogDetailView(log: log)
+                .environmentObject(database)
+                .frame(minWidth: 600, minHeight: 650)
+        }
         .task {
             database.refreshDashboardStats(days: daysForRange(timeRange))
         }
@@ -79,7 +88,7 @@ struct DashboardView: View {
             Spacer()
 
             Picker("时间范围", selection: $timeRange) {
-                ForEach(TimeRange.allCases, id: \.self) { range in
+                ForEach(DashboardTimeRange.allCases, id: \.self) { range in
                     Text(range.rawValue).tag(range)
                 }
             }
@@ -103,50 +112,268 @@ struct DashboardView: View {
         }
     }
 
-    // MARK: - Metrics Grid
+    // MARK: - Safety Control & Guard Banner
+
+    private var safetyGuardBanner: some View {
+        let isRunning = proxyServer.isRunning
+        let errorRate = stats.errorRate
+        let hasPotentialLoop = stats.recentLogs.count >= 5 && stats.errorCount > 0 && errorRate > 15.0
+        
+        return HStack(spacing: 16) {
+            // Pulsing status shield icon
+            ZStack {
+                Circle()
+                    .fill(isRunning ? (hasPotentialLoop ? Color.warningOrange.opacity(0.15) : Color.successGreen.opacity(0.15)) : Color.gray.opacity(0.15))
+                    .frame(width: 44, height: 44)
+                
+                Image(systemName: isRunning ? "shield.fill" : "shield.slash.fill")
+                    .font(.title2)
+                    .foregroundStyle(isRunning ? (hasPotentialLoop ? Color.warningOrange : Color.successGreen) : Color.gray)
+            }
+            .padding(.leading, 8)
+            
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Text(isRunning ? "网关拦截防御罩已开启" : "网关拦截防御罩已关闭")
+                        .font(.headline)
+                    
+                    if isRunning {
+                        Text("运行中")
+                            .font(.system(size: 9, weight: .bold))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.successGreen.opacity(0.15))
+                            .foregroundStyle(Color.successGreen)
+                            .clipShape(Capsule())
+                    } else {
+                        Text("未启动")
+                            .font(.system(size: 9, weight: .bold))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.secondary.opacity(0.15))
+                            .foregroundStyle(.secondary)
+                            .clipShape(Capsule())
+                    }
+                    
+                    if hasPotentialLoop {
+                        Text("🚨 异常率偏高 · 请注意死循环风险")
+                            .font(.system(size: 9, weight: .bold))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.errorRed.opacity(0.15))
+                            .foregroundStyle(Color.errorRed)
+                            .clipShape(Capsule())
+                    } else if isRunning {
+                        Text("🛡️ 防护状态：安全")
+                            .font(.system(size: 9, weight: .bold))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.infoBlue.opacity(0.15))
+                            .foregroundStyle(Color.infoBlue)
+                            .clipShape(Capsule())
+                    }
+                }
+                
+                Text(isRunning 
+                     ? "本地代理拦截器处于监听状态。AI 代理发送的 API 请求将被安全分发与限流拦截，防止高频重复调用死循环。" 
+                     : "当前处于网关直连或旁路模式，无法实时拦截代理死循环和统计最新速率配额。建议开启网关。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            
+            Spacer()
+            
+            // Switch toggle or buttons for emergency actions
+            VStack(alignment: .trailing, spacing: 6) {
+                Button(action: {
+                    if isRunning {
+                        proxyServer.stop()
+                    } else {
+                        proxyServer.start()
+                    }
+                }) {
+                    Label(isRunning ? "紧急关闭网关" : "快速启动网关", systemImage: isRunning ? "power" : "play.fill")
+                        .font(.subheadline)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(isRunning ? Color.errorRed : Color.successGreen)
+            }
+        }
+        .padding()
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(.ultraThinMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(isRunning ? (hasPotentialLoop ? Color.warningOrange.opacity(0.3) : Color.successGreen.opacity(0.2)) : Color.gray.opacity(0.15), lineWidth: 1)
+                )
+        )
+    }
+
+    // MARK: - Redesigned Metrics Grid
 
     private var metricsGrid: some View {
         HStack(spacing: 16) {
             MetricCardView(
-                title: "总调用",
+                title: "总调用次数 (Calls)",
                 value: stats.totalCalls.formattedCompact,
                 icon: "bolt.fill",
                 color: .infoBlue,
-                subtitle: "次"
+                subtitle: "异常率: \(stats.errorRate.formattedPercent) (\(stats.errorCount)个)"
             )
 
             MetricCardView(
-                title: "总 Token",
+                title: "Token 吞吐 (Tokens)",
                 value: stats.totalTokens.formattedCompact,
                 icon: "textformat.abc",
                 color: .accentGradientStart,
-                subtitle: "prompt \(stats.totalPromptTokens.formattedCompact) + completion \(stats.totalCompletionTokens.formattedCompact)"
+                subtitle: "P: \(stats.totalPromptTokens.formattedCompact) / C: \(stats.totalCompletionTokens.formattedCompact)"
             )
 
             MetricCardView(
-                title: "预估费用",
-                value: stats.totalCost.formattedCurrency,
-                icon: "dollarsign.circle.fill",
-                color: .successGreen,
-                subtitle: "美元"
-            )
-
-            MetricCardView(
-                title: "平均响应",
+                title: "平均延迟 (Latency)",
                 value: stats.avgResponseTime.formattedDuration,
-                icon: "clock.fill",
+                icon: "timer",
                 color: .warningOrange,
-                subtitle: "响应时间"
+                subtitle: "LLM 平均响应耗时"
             )
 
             MetricCardView(
-                title: "错误率",
-                value: stats.errorRate.formattedPercent,
-                icon: "exclamationmark.triangle.fill",
-                color: stats.errorRate > 10 ? .errorRed : .successGreen,
-                subtitle: "\(stats.errorCount) 个错误"
+                title: "本地调用 (Local)",
+                value: stats.localCallsCount.formattedCompact,
+                icon: "cpu",
+                color: .successGreen,
+                subtitle: "Ollama 本地转发次数"
             )
         }
+    }
+
+    // MARK: - Vulnerability & Anomaly Spotlights
+
+    private var performanceSpotlightRow: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("性能瓶颈与异常监控 (Anomaly & Performance Spotlights)")
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+                Spacer()
+                Text("过滤窗口内性能及用量极值分析")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            
+            HStack(spacing: 16) {
+                // Card 1: Slowest Latency Call
+                spotlightCard(
+                    title: "⏱️ 最慢延迟调用",
+                    log: stats.slowestLog,
+                    metricLabel: "耗时",
+                    metricValue: stats.slowestLog?.duration?.formattedDuration ?? "—",
+                    color: .warningOrange,
+                    emptyText: "暂无慢调用记录"
+                )
+                
+                // Card 2: Largest Context Payload
+                spotlightCard(
+                    title: "📦 最大上下文 Payload",
+                    log: stats.largestPayloadLog,
+                    metricLabel: "大小",
+                    metricValue: stats.largestPayloadLog?.totalTokens.map { "\($0.formattedCompact) tok" } ?? "—",
+                    color: .infoBlue,
+                    emptyText: "暂无上下文日志"
+                )
+            }
+        }
+    }
+    
+    @ViewBuilder
+    private func spotlightCard(
+        title: String,
+        log: ParsedLog?,
+        metricLabel: String,
+        metricValue: String,
+        color: Color,
+        emptyText: String
+    ) -> some View {
+        Button(action: {
+            if let log = log {
+                selectedLogForDetail = log
+            }
+        }) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(title)
+                    .font(.subheadline.bold())
+                    .foregroundStyle(.primary)
+                
+                if let log = log {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(log.modelName ?? "Unknown Model")
+                                .font(.system(size: 13, weight: .bold, design: .rounded))
+                                .foregroundStyle(color)
+                                .lineLimit(1)
+                            
+                            Text("来源: \(log.sourceFile.split(separator: "/").last.map(String.init) ?? log.sourceFile)")
+                                .font(.system(size: 9))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        Spacer()
+                        
+                        VStack(alignment: .trailing, spacing: 2) {
+                            Text(metricValue)
+                                .font(.system(size: 14, weight: .bold, design: .rounded))
+                                .foregroundStyle(.primary)
+                            Text(metricLabel)
+                                .font(.system(size: 8))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                    
+                    Divider().opacity(0.3)
+                    
+                    if let prompt = log.prompt, !prompt.isEmpty {
+                        Text(prompt.trimmingCharacters(in: .whitespacesAndNewlines))
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        Text("无 prompt 详情")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                } else {
+                    Spacer()
+                    VStack(spacing: 6) {
+                        Image(systemName: "circle.slash")
+                            .font(.title2)
+                            .foregroundStyle(.tertiary)
+                        Text(emptyText)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    Spacer()
+                }
+            }
+            .padding()
+            .frame(maxWidth: .infinity, minHeight: 110)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(.ultraThinMaterial)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(color.opacity(log != nil ? 0.25 : 0.1), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(log == nil)
     }
 
     // MARK: - Token Trend Chart
@@ -207,40 +434,27 @@ struct DashboardView: View {
                     provider: provider,
                     count: count,
                     tokens: 0,
-                    cost: 0.0,
                     avgDuration: 0.0,
-                    displayValue: metricType == .calls ? Double(count) : 0.0,
+                    displayValue: Double(count),
                     percentage: pct
                 )
             }.sorted { $0.count > $1.count }
         }
-        
-        let totalVal: Double
-        if metricType == .calls {
-            totalVal = Double(allStats.values.map { $0.count }.reduce(0, +))
-        } else {
-            totalVal = allStats.values.map { $0.cost }.reduce(0.0, +)
-        }
-        
+
+        let totalVal = Double(allStats.values.map { $0.count }.reduce(0, +))
+
         return allStats.map { provider, stat in
-            let displayVal = metricType == .calls ? Double(stat.count) : stat.cost
+            let displayVal = Double(stat.count)
             let pct = totalVal > 0 ? displayVal / totalVal : 0.0
             return ProviderDisplayData(
                 provider: provider,
                 count: stat.count,
                 tokens: stat.tokens,
-                cost: stat.cost,
                 avgDuration: stat.avgDuration,
                 displayValue: displayVal,
                 percentage: pct
             )
-        }.sorted { a, b in
-            if metricType == .calls {
-                return a.count > b.count
-            } else {
-                return a.cost > b.cost
-            }
-        }
+        }.sorted { $0.count > $1.count }
     }
 
     private var providerDistribution: some View {
@@ -250,22 +464,14 @@ struct DashboardView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("提供商分布")
                         .font(.headline)
-                    Text(metricType == .calls ? "按调用次数统计" : "按预估费用统计")
+                    Text("按调用次数统计")
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                 }
-                
+
                 Spacer()
-                
+
                 HStack(spacing: 6) {
-                    Picker("指标", selection: $metricType) {
-                        ForEach(MetricType.allCases) { type in
-                            Text(type.rawValue).tag(type)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(width: 80)
-                    
                     Picker("模式", selection: $viewMode) {
                         ForEach(DistributionViewMode.allCases) { mode in
                             Text(mode.rawValue).tag(mode)
@@ -275,9 +481,9 @@ struct DashboardView: View {
                     .frame(width: 80)
                 }
             }
-            
+
             let data = providerDisplayList
-            
+
             if data.isEmpty {
                 emptyChartPlaceholder("暂无数据")
             } else {
@@ -288,7 +494,7 @@ struct DashboardView: View {
                             donutChartView(data: data)
                                 .frame(width: 110, height: 110)
                                 .padding(.leading, 4)
-                            
+
                             ScrollView {
                                 VStack(alignment: .leading, spacing: 4) {
                                     ForEach(data) { item in
@@ -310,7 +516,7 @@ struct DashboardView: View {
                         }
                         .frame(height: 110)
                     }
-                    
+
                     // Spotlight Details Box (Shows details of selected provider, or the top provider by default)
                     let activeProvider = selectedProvider ?? data.first?.provider
                     if let activeProvider, let activeData = data.first(where: { $0.provider == activeProvider }) {
@@ -352,19 +558,19 @@ struct DashboardView: View {
                 Circle()
                     .fill(item.provider.brandColor)
                     .frame(width: 6, height: 6)
-                
+
                 Text(item.provider.displayName)
                     .font(.system(size: 10))
                     .lineLimit(1)
                     .foregroundStyle(isSelected ? .primary : .secondary)
                     .fontWeight(isSelected ? .semibold : .regular)
-                
+
                 Spacer(minLength: 4)
-                
+
                 Text(metricText(item: item))
                     .font(.system(size: 9).monospacedDigit())
                     .foregroundStyle(isSelected ? .primary : .secondary)
-                
+
                 Text(String(format: "%.0f%%", item.percentage * 100.0))
                     .font(.system(size: 9).monospacedDigit())
                     .foregroundStyle(.secondary)
@@ -381,11 +587,7 @@ struct DashboardView: View {
     }
 
     private func metricText(item: ProviderDisplayData) -> String {
-        if metricType == .calls {
-            return "\(item.count)次"
-        } else {
-            return item.cost.formattedCurrency
-        }
+        return "\(item.count)次"
     }
 
     private func providerBarRow(item: ProviderDisplayData) -> some View {
@@ -405,27 +607,27 @@ struct DashboardView: View {
                         Image(systemName: item.provider.iconName)
                             .font(.system(size: 10))
                             .foregroundStyle(item.provider.brandColor)
-                        
+
                         Text(item.provider.displayName)
                             .font(.system(size: 10, weight: .medium))
                     }
-                    
+
                     Spacer()
-                    
+
                     Text(metricText(item: item))
                         .font(.system(size: 9).monospacedDigit())
-                    
+
                     Text(String(format: "%.1f%%", item.percentage * 100.0))
                         .font(.system(size: 9).monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
-                
+
                 GeometryReader { geo in
                     let fillWidth = max(geo.size.width * CGFloat(item.percentage), 6)
                     ZStack(alignment: .leading) {
                         RoundedRectangle(cornerRadius: 2)
                             .fill(Color.primary.opacity(0.04))
-                        
+
                         RoundedRectangle(cornerRadius: 2)
                             .fill(item.provider.brandColor.gradient)
                             .frame(width: fillWidth)
@@ -457,13 +659,13 @@ struct DashboardView: View {
                         .frame(width: 18, height: 18)
                         .background(item.provider.brandColor)
                         .clipShape(Circle())
-                    
+
                     Text(item.provider.displayName)
                         .font(.system(size: 11, weight: .semibold))
                 }
-                
+
                 Spacer()
-                
+
                 Button(action: {
                     NotificationCenter.default.post(
                         name: Notification.Name("NavigateToRateLimits"),
@@ -483,7 +685,7 @@ struct DashboardView: View {
                 }
                 .buttonStyle(.plain)
             }
-            
+
             HStack(spacing: 6) {
                 spotlightMetricTile(
                     title: "调用次数",
@@ -491,21 +693,14 @@ struct DashboardView: View {
                     subValue: String(format: "%.1f%% 占比", item.percentage * 100.0),
                     color: item.provider.brandColor
                 )
-                
-                spotlightMetricTile(
-                    title: "估算费用",
-                    value: item.cost.formattedCurrency,
-                    subValue: item.count > 0 ? "\((item.cost / Double(item.count)).formattedCurrency)/次" : "$0.00/次",
-                    color: .successGreen
-                )
-                
+
                 spotlightMetricTile(
                     title: "总 Token",
                     value: item.tokens.formattedCompact,
                     subValue: item.count > 0 ? "\(item.tokens / item.count) avg" : "0 avg",
                     color: .accentGradientStart
                 )
-                
+
                 spotlightMetricTile(
                     title: "平均耗时",
                     value: item.avgDuration.formattedDuration,
@@ -530,12 +725,12 @@ struct DashboardView: View {
             Text(title)
                 .font(.system(size: 8))
                 .foregroundStyle(.secondary)
-            
+
             Text(value)
                 .font(.system(size: 10, weight: .bold, design: .rounded))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
-            
+
             Text(subValue)
                 .font(.system(size: 8))
                 .foregroundStyle(.secondary)
@@ -622,7 +817,9 @@ struct DashboardView: View {
                 ScrollView {
                     LazyVStack(spacing: 8) {
                         ForEach(stats.recentLogs) { log in
-                            LiveFeedRow(log: log)
+                            LiveFeedRow(log: log) {
+                                selectedLogForDetail = log
+                            }
                         }
                     }
                 }
@@ -648,8 +845,9 @@ struct DashboardView: View {
         .frame(maxWidth: .infinity, minHeight: 120)
     }
 
-    private func daysForRange(_ range: TimeRange) -> Int? {
+    private func daysForRange(_ range: DashboardTimeRange) -> Int? {
         switch range {
+        case .today: return 0
         case .week: return 7
         case .month: return 30
         case .all: return nil
@@ -711,46 +909,50 @@ struct MetricCardView: View {
 
 struct LiveFeedRow: View {
     let log: ParsedLog
+    let onTap: () -> Void
 
     var body: some View {
-        HStack(spacing: 10) {
-            // Provider icon
-            Image(systemName: log.provider?.iconName ?? "questionmark.circle")
-                .font(.caption)
-                .foregroundStyle(log.provider?.brandColor ?? .secondary)
-                .frame(width: 20)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(log.modelName ?? "Unknown")
+        Button(action: onTap) {
+            HStack(spacing: 10) {
+                // Provider icon
+                Image(systemName: log.provider?.iconName ?? "questionmark.circle")
                     .font(.caption)
-                    .fontWeight(.medium)
-                    .lineLimit(1)
+                    .foregroundStyle(log.provider?.brandColor ?? .secondary)
+                    .frame(width: 20)
 
-                if let tokens = log.totalTokens {
-                    Text("\(tokens.formattedCompact) tokens")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(log.modelName ?? "Unknown")
+                        .font(.caption)
+                        .fontWeight(.medium)
+                        .lineLimit(1)
+
+                    if let tokens = log.totalTokens {
+                        Text("\(tokens.formattedCompact) tokens")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
                 }
-            }
 
-            Spacer()
+                Spacer()
 
-            if log.errorMessage != nil {
-                Image(systemName: "exclamationmark.circle.fill")
+                if log.errorMessage != nil {
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .font(.caption2)
+                        .foregroundStyle(Color.errorRed)
+                }
+
+                Text(log.timestamp.formattedRelative)
                     .font(.caption2)
-                    .foregroundStyle(Color.errorRed)
+                    .foregroundStyle(.tertiary)
             }
-
-            Text(log.timestamp.formattedRelative)
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color.primary.opacity(0.03))
+            )
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(Color.primary.opacity(0.03))
-        )
+        .buttonStyle(.plain)
     }
 }
 
@@ -767,7 +969,6 @@ struct ProviderDisplayData: Identifiable {
     let provider: LLMProvider
     let count: Int
     let tokens: Int
-    let cost: Double
     let avgDuration: Double
     let displayValue: Double
     let percentage: Double

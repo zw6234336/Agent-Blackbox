@@ -67,7 +67,9 @@ struct RateLimitView: View {
             tracker.start()
         }
         .onDisappear {
-            tracker.refresh()
+            Task {
+                await tracker.refresh()
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("NavigateToRateLimits"))) { notification in
             if let provider = notification.object as? LLMProvider {
@@ -211,7 +213,9 @@ struct RateLimitView: View {
                     .disabled(planDetector.isDetecting)
 
                     Button {
-                        tracker.refresh()
+                        Task {
+                            await tracker.refresh()
+                        }
                     } label: {
                         Image(systemName: "arrow.clockwise")
                             .font(.caption)
@@ -336,7 +340,9 @@ struct RateLimitView: View {
                     Spacer()
                     Button {
                         planDetector.applyToConfig(configService)
-                        tracker.refresh()
+                        Task {
+                            await tracker.refresh()
+                        }
                         showingApplyConfirm = true
                         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { showingApplyConfirm = false }
                     } label: {
@@ -777,7 +783,9 @@ private struct ProviderDetailView: View {
             actionRow(icon: "chart.bar.fill", label: "Usage Dashboard", color: .infoBlue) {}
             Divider().padding(.leading, 32).opacity(0.3)
             actionRow(icon: "arrow.clockwise", label: "Refresh", color: .primary, shortcut: "⌘R") {
-                tracker.refresh()
+                Task {
+                    await tracker.refresh()
+                }
             }
             Divider().padding(.leading, 32).opacity(0.3)
             actionRow(icon: "gearshape", label: "Settings…", color: .primary, shortcut: "⌘,") {
@@ -950,43 +958,12 @@ private struct HourlyMiniChart: View {
         let count: Int
     }
 
-    private struct ChartData {
-        let buckets: [HourlyBucket]
-        let topModel: String
-    }
-
-    private var chartData: ChartData {
-        let now = Date()
-        let calendar = Calendar.current
-        let logs = database.fetchLogs(provider: provider,
-                                       since: now.addingTimeInterval(-24 * 3600),
-                                       until: now)
-        // Hourly buckets
-        var counts = [Int: Int]()
-        for i in 0..<24 { counts[i] = 0 }
-
-        // Model counts
-        var modelCounts = [String: Int]()
-
-        for log in logs {
-            let hour = calendar.component(.hour, from: log.timestamp)
-            counts[hour, default: 0] += 1
-            if let model = log.modelName {
-                modelCounts[model, default: 0] += 1
-            }
-        }
-
-        let buckets = counts.map { HourlyBucket(id: $0.key, hour: $0.key, count: $0.value) }
-            .sorted { $0.hour < $1.hour }
-        let topModel = modelCounts.max(by: { $0.value < $1.value })?.key ?? "—"
-
-        return ChartData(buckets: buckets, topModel: topModel)
-    }
+    @State private var buckets: [HourlyBucket] = []
+    @State private var topModel: String = "—"
 
     var body: some View {
-        let data = chartData
         VStack(alignment: .leading, spacing: 4) {
-            Chart(data.buckets) { bucket in
+            Chart(buckets) { bucket in
                 BarMark(
                     x: .value("Hour", bucket.hour),
                     y: .value("Count", bucket.count)
@@ -997,9 +974,14 @@ private struct HourlyMiniChart: View {
             .chartXAxis(.hidden)
             .chartYAxis(.hidden)
 
-            Text("Top model: \(data.topModel)")
+            Text("Top model: \(topModel)")
                 .font(.system(size: 10))
                 .foregroundStyle(.tertiary)
+        }
+        .task(id: provider) {
+            let data = await database.fetchHourlyChartData(provider: provider)
+            self.buckets = data.buckets.map { HourlyBucket(id: $0.hour, hour: $0.hour, count: $0.count) }
+            self.topModel = data.topModel
         }
     }
 }
@@ -1167,7 +1149,9 @@ struct RateLimitEditor: View {
         )
         configService.config.providerRateLimits[provider.rawValue] = new
         configService.save()
-        tracker.refresh()
+        Task {
+            await tracker.refresh()
+        }
         dismiss()
     }
 }

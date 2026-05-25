@@ -33,6 +33,12 @@ Agent Blackbox provides a local gateway sandbox that intercept these loops, esti
 * **Emergency Cutoff**: Features a one-click "Disconnect Interception" button inside the alarm card, immediately restoring the client's default configurations and shutting off further billing.
 * **Prompt Similarity Analyzer**: Compares consecutive prompt payloads using Jaccard Similarity and displays a colored line-by-line `+ / -` diff to pinpoint exactly why the agent is repeating itself.
 
+#### 📊 Developer-Centric Dashboard & Time Range Persistence
+* **Safety Banner & Controls**: Display real-time loop risk warning and active shield status, along with an emergency gateway toggle button to shut down or start local listening.
+* **Persisted Filter Choice**: Defaults time range to "Today", and saves user filter selection using `@AppStorage` to prevent it from resetting during menu switching.
+* **Cost & Local Savings Focus**: Puts total estimated API cost and local Ollama route savings ($0.015 per call saved) front-and-center in the primary metrics grid.
+* **Vulnerability Spotlights**: Highlights the slowest latency call, the most expensive request, and the largest context payload in the active time window with inline prompt previews and single-click inspect sheets.
+
 #### 📊 Session-Based Performance Charts (Slide Freezing)
 * **Visual Graph**: Displays token rate (Tokens/3s) and cost trends (USD) grouped by client with matching color palettes.
 * **Freezing on Idle**: If the gateway is idle for more than 30 seconds, the chart automatically pauses scrolling (`⏸ View Frozen`), preserving historical conversation peaks on the screen instead of letting them slide off-screen.
@@ -54,7 +60,7 @@ Agent Blackbox provides a local gateway sandbox that intercept these loops, esti
 * **Core**: Swift 5.10 / SwiftUI
 * **Network Interceptor**: Apple Network framework `NWListener` for local socket proxying.
 * **Charts**: Swift Charts (`AreaMark`, `LineMark` with gradient fills).
-* **Database**: `SQLite.swift` for lightweight, thread-safe local logging and historical usage aggregation.
+* **Database**: `SQLite.swift` for lightweight local logging and historical usage aggregation. Heavily optimized using Swift `async/await` and background queue offloading to guarantee stutter-free 60fps UI scrolling.
 
 ---
 
@@ -99,6 +105,29 @@ swift run
 ```
 Or simply open the directory in Xcode, select the `Agent-Blackbox` scheme, and hit `Cmd + R` to build and run.
 
+#### ⚙️ Configuring VS Code / Cursor AI Clients
+
+You can route your VS Code AI extensions through the Agent Blackbox local proxy using two methods:
+
+##### Method A: Automatic Handover (Recommended)
+1. Launch **Agent Blackbox**.
+2. Go to **Settings** -> **Client Interception** (or use the toggle panel on the right side of the dashboard).
+3. Toggle on **VS Code - Cline** or **VS Code - Roo-Cline**.
+4. The application will automatically overwrite your local settings file to point the base URL to `http://127.0.0.1:9999/v1` and set a placeholder API key.
+5. On exit, Agent Blackbox will automatically restore your original config files.
+
+##### Method B: Manual Configuration
+If automatic file access is blocked by macOS Sandbox permissions:
+1. Open **VS Code** (or **Cursor**).
+2. Open settings for your extension (e.g. **Cline** or **Roo-Cline**).
+3. Set the **API Provider** to **OpenAI Compatible**.
+4. Configure the **Base URL** to:
+   ```
+   http://127.0.0.1:9999/v1
+   ```
+5. Enter any placeholder text for the **API Key** (e.g., `agent-blackbox-proxy`).
+6. Set the **Model ID** to your preferred model (e.g., `claude-3-5-sonnet` or `gpt-4o` or `deepseek-chat`). The gateway will automatically intercept the request, extract the model ID, and forward it to the correct upstream endpoint.
+
 ---
 
 ## 简体中文版
@@ -126,6 +155,12 @@ Agent Blackbox 提供了一个本地网关沙盒，实时捕获此类死循环�
 * **紧急熔断器**：报警卡片中包含“切断托管”按钮，点击即可瞬间恢复该客户端的默认代理配置，在网关侧掐断 AI 的无限循环以停止扣费。
 * **提示词相似度分析**：通过 Jaccard 词袋相似度对比相邻的 Prompt Payload。当相似度 $>85\%$ 时触发高亮，并提供 `SimpleDiffView`，以红/绿、`+/-` 符号直观展示前后 Prompt 的行级差异，秒级揪出死循环元凶。
 
+#### 📊 开发者自研看板与持久化时间选择 (Redesigned Dashboard)
+* **安全横幅与紧急开关**：显示死循环高危预警与网关防御罩开启状态，并提供一键紧急启动/关闭本地网关代理的控制按钮。
+* **持久化时间过滤**：将时间范围默认值设为“当天”，并采用 `@AppStorage` 进行偏好固定，在侧边栏页面切换时保留选择。
+* **资费与本地节省聚焦**：在最显著的指标卡处展示累计花费以及通过 Ollama 等本地路由节省的金额（每次按 0.015 美元估算）。
+* **极值与异常曝光 (Spotlights)**：以三栏卡片将过滤时间段内的“最慢延迟请求”、“最高单次计费”以及“最大上下文 Payload”直接提取展示，支持点击一键弹窗查看 Payload 详情。
+
 #### 📊 会话闲置冷冻图表 (Visual Chart) —— 消除数据空白焦虑
 * **性能曲线**：以不同客户端的主题色（如 Pi-粉色、Cline-橙色）分类展示 Token 吞吐率 (T/3s) 或资费消耗 (USD) 曲线。
 * **会话冷冻模式**：如果网关检测到 30 秒内没有任何新请求，时间轴将自动停止向左滚动（进入 `⏸ 视图静止` 状态），完整保留上一次的波动波峰。当新请求到来时图表自动唤醒并继续推进，完美解决闲置时数据清空变平的痛点。
@@ -147,4 +182,31 @@ Agent Blackbox 提供了一个本地网关沙盒，实时捕获此类死循环�
 * **核心框架**：Swift 5.10 / SwiftUI
 * **网关拦截**：基于 Network 框架 `NWListener` 实现高并发的本地 TCP/HTTP 套接字代理。
 * **图表库**：Swift Charts (采用 `.linearGradient` 渐变填充 AreaMark 与 LineMark)。
-* **数据存储**：`SQLite.swift` 驱动的本地轻量级数据库，用于日志持久化及资费分析聚合。
+* **数据存储**：`SQLite.swift` 驱动的本地轻量级数据库，用于日志持久化及资费分析聚合。经 `async/await` 与后台队列异步化重构，确保在大体量数据库下界面滑动流畅无卡顿。
+
+---
+
+### 快速使用与配置
+
+#### ⚙️ 在 VS Code / Cursor 中配置代理
+
+您可以通过以下两种方式将 VS Code 中的 AI 插件流量接入到 Agent Blackbox：
+
+##### 方法一：自动一键托管（推荐）
+1. 启动 **Agent Blackbox** 客户端。
+2. 进入 **设置 (Settings)** -> **客户端接管 (Client Interception)** 面板（或者直接使用 Dashboard 右侧的“快捷接管控制”面板）。
+3. 开启 **VS Code - Cline** 或 **VS Code - Roo-Cline** 开关。
+4. 本应用将自动修改目标插件的配置文件，将 API 提供商重定向至本地网关 `http://127.0.0.1:9999/v1`。
+5. 当您退出 Agent Blackbox 时，程序会自动恢复您原本的配置文件备份，实现完全无感接入。
+
+##### 方法二：手动修改配置 (备用)
+如果由于 macOS 系统沙盒（Sandbox）或文件读写权限受限导致自动修改失败：
+1. 打开 **VS Code** (或 **Cursor**)。
+2. 打开 **Cline** 或 **Roo-Cline** 的设置页面。
+3. 将 **API Provider**（API 提供商）切换为 **OpenAI Compatible** (或 OpenRouter)。
+4. 将 **Base URL** 设置为本地网关地址：
+   ```
+   http://127.0.0.1:9999/v1
+   ```
+5. **API Key** 处填写任意占位符（如 `agent-blackbox-proxy`）。
+6. **Model ID**（模型名称）处填写您需要调用的真实模型（例如 `claude-3-5-sonnet`、`gpt-4o` 或 `deepseek-chat`）。网关接收到请求后，会自动智能解析并选择正确的云端 API 上游进行路由转发。

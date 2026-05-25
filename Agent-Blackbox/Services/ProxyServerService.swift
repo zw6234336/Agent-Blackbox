@@ -17,7 +17,6 @@ struct ProxyRequestLog: Identifiable, Hashable {
     var completionTokens: Int?
     var errorMessage: String?
     var isPending: Bool
-    var estimatedCost: Double? = nil
 }
 
 @MainActor
@@ -233,9 +232,18 @@ final class ProxyServerService: ObservableObject {
             }
         }
         
-        // 2. Check Authorization header prefix to guess provider
-        if let auth = headers["authorization"] {
-            let token = auth.replacingOccurrences(of: "Bearer ", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+        // 2. Check Authorization or X-API-Key header prefix to guess provider
+        let token: String? = {
+            if let auth = headers["authorization"] {
+                return auth.replacingOccurrences(of: "Bearer ", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            if let xKey = headers["x-api-key"] {
+                return xKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            return nil
+        }()
+        
+        if let token = token {
             if token.hasPrefix("sk-or-") {
                 Logger.shared.info("网关代理: 检测到 OpenRouter Token，重定向至 OpenRouter 上游")
                 return "https://openrouter.ai/api"
@@ -299,6 +307,13 @@ final class ProxyServerService: ObservableObject {
            cleanBase.contains("/v4") {
             if cleanPath.hasPrefix("/v1/") {
                 cleanPath = String(cleanPath.dropFirst(3)) // "/v1/chat/completions" -> "/chat/completions"
+            }
+        }
+        
+        // For Anthropic, ensure the path has "/v1" prefix
+        if cleanBase.contains("api.anthropic.com") {
+            if !cleanPath.hasPrefix("/v1/") {
+                cleanPath = "/v1" + cleanPath // "/messages" -> "/v1/messages"
             }
         }
         
@@ -449,9 +464,6 @@ final class ProxyServerService: ObservableObject {
         let totalTokensVal = (promptTokensVal != nil || completionTokensVal != nil) ? ((promptTokensVal ?? 0) + (completionTokensVal ?? 0)) : nil
         let errorMessage = error?.localizedDescription ?? (statusCode >= 400 ? "HTTP Error \(statusCode)" : nil)
 
-        // Calculate Cost
-        let cost = calculateCost(model: model, promptTokens: promptTokensVal ?? 0, completionTokens: completionTokensVal ?? 0)
-
         // Update live requests list
         if let index = self.liveRequests.firstIndex(where: { $0.id == requestId }) {
             self.liveRequests[index].isPending = false
@@ -461,7 +473,6 @@ final class ProxyServerService: ObservableObject {
             self.liveRequests[index].completionTokens = completionTokensVal
             self.liveRequests[index].response = responseText
             self.liveRequests[index].errorMessage = errorMessage
-            self.liveRequests[index].estimatedCost = cost
             if model != "unknown" {
                 self.liveRequests[index].model = model
             }
@@ -500,7 +511,6 @@ final class ProxyServerService: ObservableObject {
             promptTokens: promptTokensVal,
             completionTokens: completionTokensVal,
             totalTokens: totalTokensVal,
-            estimatedCost: cost,
             duration: duration,
             statusCode: statusCode,
             errorMessage: errorMessage,
@@ -518,21 +528,7 @@ final class ProxyServerService: ObservableObject {
         }
     }
 
-    private func calculateCost(model: String?, promptTokens: Int, completionTokens: Int) -> Double {
-        guard let model = model, let config = configService?.config else { return 0.0 }
-        
-        // Find rate
-        var matchedRate: TokenRate? = nil
-        for (pattern, rate) in config.tokenRates {
-            if model.lowercased().contains(pattern.lowercased()) {
-                matchedRate = rate
-                break
-            }
-        }
-        
-        let rate = matchedRate ?? TokenRate(inputPer1K: 0.003, outputPer1K: 0.015) // Fallback rate
-        return rate.estimateCost(promptTokens: promptTokens, completionTokens: completionTokens)
-    }
+
 
     private func estimateTokens(for text: String) -> Int {
         let chineseCharCount = text.filter { $0.isChineseCharacter }.count
@@ -597,10 +593,10 @@ private class ProxySessionDelegate: NSObject, URLSessionDataDelegate {
             clientHeaders["Transfer-Encoding"] = "chunked"
             clientHeaders.removeValue(forKey: "Content-Length")
             clientHeaders.removeValue(forKey: "content-length")
+            
+            sendResponseHeaders(connection: clientConnection, statusCode: httpResponse.statusCode, statusText: HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode), headers: clientHeaders)
+            responseHeadersSent = true
         }
-        
-        sendResponseHeaders(connection: clientConnection, statusCode: httpResponse.statusCode, statusText: HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode), headers: clientHeaders)
-        responseHeadersSent = true
         
         completionHandler(.allow)
     }
@@ -608,23 +604,45 @@ private class ProxySessionDelegate: NSObject, URLSessionDataDelegate {
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
         responseData.append(data)
         
-        if responseHeadersSent {
+        if isStreamingResponse && responseHeadersSent {
             sendChunk(connection: clientConnection, data: data)
         }
     }
     
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        let httpResponse = task.response as? HTTPURLResponse
+        let statusCode = httpResponse?.statusCode ?? (error == nil ? 200 : 500)
+        let statusText = HTTPURLResponse.localizedString(forStatusCode: statusCode)
+        
         if !responseHeadersSent {
-            let statusCode = (task.response as? HTTPURLResponse)?.statusCode ?? (error == nil ? 200 : 500)
-            let statusText = HTTPURLResponse.localizedString(forStatusCode: statusCode)
-            sendResponseHeaders(connection: clientConnection, statusCode: statusCode, statusText: statusText, headers: [:])
+            var clientHeaders: [String: String] = [:]
+            if let httpResponse = httpResponse {
+                for (key, val) in httpResponse.allHeaderFields {
+                    if let keyStr = key as? String {
+                        clientHeaders[keyStr] = val as? String
+                    }
+                }
+            }
+            // Set correct content-length for non-streaming response
+            clientHeaders["Content-Length"] = "\(responseData.count)"
+            clientHeaders.removeValue(forKey: "content-length")
+            clientHeaders.removeValue(forKey: "Transfer-Encoding")
+            clientHeaders.removeValue(forKey: "transfer-encoding")
+            
+            sendResponseHeaders(connection: clientConnection, statusCode: statusCode, statusText: statusText, headers: clientHeaders)
+            responseHeadersSent = true
+            
+            // Send raw data body
+            if !responseData.isEmpty {
+                clientConnection.send(content: responseData, completion: .contentProcessed({ _ in }))
+            }
+        } else {
+            if isStreamingResponse {
+                sendChunkEnd(connection: clientConnection)
+            }
         }
         
-        sendChunkEnd(connection: clientConnection)
-        
-        let httpResponse = task.response as? HTTPURLResponse
         onResponseComplete(httpResponse, responseData, isStreamingResponse, error)
-        
         session.finishTasksAndInvalidate()
     }
     

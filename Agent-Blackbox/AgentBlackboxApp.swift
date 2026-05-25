@@ -18,6 +18,9 @@ struct AgentBlackboxApp: App {
     @StateObject private var planDetector = PlanDetectionService()
     @StateObject private var proxyServer = ProxyServerService()
     @StateObject private var clientInterception = ClientInterceptionService()
+    @StateObject private var desktopWidget = DesktopWidgetService()
+    @StateObject private var gitIntegration = GitIntegrationService()
+    @StateObject private var keyBalance = KeyBalanceService()
 
     @Environment(\.openWindow) private var openWindow
 
@@ -37,11 +40,16 @@ struct AgentBlackboxApp: App {
                 .environmentObject(planDetector)
                 .environmentObject(proxyServer)
                 .environmentObject(clientInterception)
+                .environmentObject(desktopWidget)
+                .environmentObject(gitIntegration)
+                .environmentObject(keyBalance)
                 .frame(minWidth: 1000, minHeight: 600)
                 .task {
                     database.initializeIfNeeded()
+                    gitIntegration.bind(database: database)
                     rateTracker.bind(database: database, config: configService)
                     rateTracker.start()
+                    keyBalance.startAutoRefresh()
 
                     // Bind and start Local API Proxy
                     proxyServer.bind(database: database, config: configService)
@@ -76,6 +84,7 @@ struct AgentBlackboxApp: App {
                 .environmentObject(database)
                 .environmentObject(proxyServer)
                 .environmentObject(clientInterception)
+                .environmentObject(keyBalance)
         }
         
         MenuBarExtra("Agent Blackbox", systemImage: "bolt.shield.fill") {
@@ -102,6 +111,12 @@ struct AgentBlackboxApp: App {
                     let paths = configService.config.monitoredDirectories
                     fileMonitor.startMonitoring(paths: paths)
                 }
+            }
+            
+            Divider()
+            
+            Button(desktopWidget.isShowing ? "隐藏桌面悬浮小窗" : "显示桌面悬浮小窗") {
+                desktopWidget.toggle(proxyServer: proxyServer)
             }
             
             Divider()

@@ -70,7 +70,6 @@ struct LogCompilation: Identifiable, Codable, Hashable {
     var compiledProviders: [String]
     var compiledModels: [String]
     var compiledTokenTotal: Int
-    var compiledCostTotal: Double
 
     init(
         id: UUID = UUID(),
@@ -93,8 +92,7 @@ struct LogCompilation: Identifiable, Codable, Hashable {
         outputFileSize: Int64? = nil,
         compiledProviders: [String] = [],
         compiledModels: [String] = [],
-        compiledTokenTotal: Int = 0,
-        compiledCostTotal: Double = 0
+        compiledTokenTotal: Int = 0
     ) {
         self.id = id
         self.name = name
@@ -117,6 +115,5 @@ struct LogCompilation: Identifiable, Codable, Hashable {
         self.compiledProviders = compiledProviders
         self.compiledModels = compiledModels
         self.compiledTokenTotal = compiledTokenTotal
-        self.compiledCostTotal = compiledCostTotal
     }
 }

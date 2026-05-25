@@ -172,7 +172,7 @@ final class DatabaseService: ObservableObject {
                                           promptTokens <- log.promptTokens,
                                           completionTokens <- log.completionTokens,
                                           totalTokens <- log.totalTokens,
-                                          estimatedCost <- log.estimatedCost,
+                                          estimatedCost <- nil,
                                           duration <- log.duration,
                                           statusCode <- log.statusCode,
                                           errorMessage <- log.errorMessage,
@@ -218,7 +218,7 @@ final class DatabaseService: ObservableObject {
                                                   promptTokens <- log.promptTokens,
                                                   completionTokens <- log.completionTokens,
                                                   totalTokens <- log.totalTokens,
-                                                  estimatedCost <- log.estimatedCost,
+                                                  estimatedCost <- nil,
                                                   duration <- log.duration,
                                                   statusCode <- log.statusCode,
                                                   errorMessage <- log.errorMessage,
@@ -243,41 +243,64 @@ final class DatabaseService: ObservableObject {
     }
 
     func reloadLogs(limit: Int = 100, offset: Int = 0) async {
-        applySnapshot(fetchLogs(limit: limit, offset: offset))
-        updateCountersFromDatabase()
-        // 注意：不在这里调用 refreshDashboardStats()。
-        // Dashboard 统计在初始扫描完成后或 DashboardView 加载时单独触发，避免每次 reload 都执行昂贵的聚合查询。
+        guard let dbConnection = self.db else { return }
+        
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                let fetched = try dbConnection.prepare(self.logsTable.order(self.timestamp.desc).limit(limit, offset: offset)).map { self.rowToParsedLog($0) }
+                
+                let total = try dbConnection.scalar(self.logsTable.count)
+                let errors = try dbConnection.scalar(
+                    self.logsTable.filter(self.errorMessage != nil && (self.errorMessage ?? "") != "").count
+                )
+                let bookmarked = try dbConnection.scalar(self.logsTable.filter(self.isBookmarked == true).count)
+                
+                Task { @MainActor in
+                    self.logs = fetched
+                    self.totalLogCount = total
+                    self.errorLogCount = errors
+                    self.bookmarkedCount = bookmarked
+                }
+            } catch {
+                Logger.shared.error("日志加载或计数更新失败: \(error.localizedDescription)")
+            }
+        }
     }
 
     func fetchLogs(limit: Int = 100, offset: Int = 0) -> [ParsedLog] {
         guard let db else { return [] }
 
         do {
-            return try db.prepare(logsTable.order(timestamp.desc).limit(limit, offset: offset)).map(rowToParsedLog)
+            return try db.prepare(logsTable.order(timestamp.desc).limit(limit, offset: offset)).map { self.rowToParsedLog($0) }
         } catch {
             Logger.shared.error("日志查询失败: \(error.localizedDescription)")
             return []
         }
     }
 
-    func searchLogs(query: String) -> [ParsedLog] {
-        guard let db else { return [] }
+    func searchLogs(query: String) async -> [ParsedLog] {
+        guard let dbConnection = self.db else { return [] }
         let like = "%\(query)%"
 
-        do {
-            let queryTable = logsTable
-                .filter(
-                    sourceFile.like(like) ||
-                    (modelName ?? "").like(like) ||
-                    (prompt ?? "").like(like) ||
-                    (response ?? "").like(like) ||
-                    (providerRaw ?? "").like(like)
-                )
-                .order(timestamp.desc)
-            return try db.prepare(queryTable).map(rowToParsedLog)
-        } catch {
-            Logger.shared.error("日志搜索失败: \(error.localizedDescription)")
-            return []
+        return await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    let queryTable = self.logsTable
+                        .filter(
+                            self.sourceFile.like(like) ||
+                            (self.modelName ?? "").like(like) ||
+                            (self.prompt ?? "").like(like) ||
+                            (self.response ?? "").like(like) ||
+                            (self.providerRaw ?? "").like(like)
+                        )
+                        .order(self.timestamp.desc)
+                    let results = try dbConnection.prepare(queryTable).map { self.rowToParsedLog($0) }
+                    continuation.resume(returning: results)
+                } catch {
+                    Logger.shared.error("日志搜索失败: \(error.localizedDescription)")
+                    continuation.resume(returning: [])
+                }
+            }
         }
     }
 
@@ -288,39 +311,44 @@ final class DatabaseService: ObservableObject {
         endDate: Date? = nil,
         hasError: Bool? = nil,
         bookmarkedOnly: Bool = false
-    ) -> [ParsedLog] {
-        guard let db else { return [] }
+    ) async -> [ParsedLog] {
+        guard let dbConnection = self.db else { return [] }
 
-        do {
-            var query = logsTable.order(timestamp.desc)
+        return await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    var query = self.logsTable.order(self.timestamp.desc)
 
-            if let provider {
-                query = query.filter(providerRaw == provider.rawValue)
-            }
-            if let model, !model.isEmpty {
-                query = query.filter(modelName == model)
-            }
-            if let startDate {
-                query = query.filter(timestamp >= startDate.timeIntervalSince1970)
-            }
-            if let endDate {
-                query = query.filter(timestamp <= endDate.timeIntervalSince1970)
-            }
-            if let hasError {
-                if hasError {
-                    query = query.filter(errorMessage != nil && (errorMessage ?? "") != "")
-                } else {
-                    query = query.filter(errorMessage == nil || (errorMessage ?? "") == "")
+                    if let provider {
+                        query = query.filter(self.providerRaw == provider.rawValue)
+                    }
+                    if let model, !model.isEmpty {
+                        query = query.filter(self.modelName == model)
+                    }
+                    if let startDate {
+                        query = query.filter(self.timestamp >= startDate.timeIntervalSince1970)
+                    }
+                    if let endDate {
+                        query = query.filter(self.timestamp <= endDate.timeIntervalSince1970)
+                    }
+                    if let hasError {
+                        if hasError {
+                            query = query.filter(self.errorMessage != nil && (self.errorMessage ?? "") != "")
+                        } else {
+                            query = query.filter(self.errorMessage == nil || (self.errorMessage ?? "") == "")
+                        }
+                    }
+                    if bookmarkedOnly {
+                        query = query.filter(self.isBookmarked == true)
+                    }
+
+                    let results = try dbConnection.prepare(query.limit(500)).map { self.rowToParsedLog($0) }
+                    continuation.resume(returning: results)
+                } catch {
+                    Logger.shared.error("日志过滤失败: \(error.localizedDescription)")
+                    continuation.resume(returning: [])
                 }
             }
-            if bookmarkedOnly {
-                query = query.filter(isBookmarked == true)
-            }
-
-            return try db.prepare(query.limit(500)).map(rowToParsedLog)
-        } catch {
-            Logger.shared.error("日志过滤失败: \(error.localizedDescription)")
-            return []
         }
     }
 
@@ -463,147 +491,175 @@ final class DatabaseService: ObservableObject {
     // MARK: - Dashboard Statistics
 
     func refreshDashboardStats(days: Int? = 7) {
-        guard let db else { return }
+        guard let dbConnection = self.db else { return }
 
-        var stats = DashboardStats()
+        DispatchQueue.global(qos: .userInitiated).async {
+            var stats = DashboardStats()
 
-        do {
-            let filterTable: Table
-            let startTimestamp: Double?
-            if let days = days {
-                let limitDate = Date().addingTimeInterval(-Double(days) * 24 * 3600).timeIntervalSince1970
-                filterTable = logsTable.filter(timestamp >= limitDate)
-                startTimestamp = limitDate
-            } else {
-                filterTable = logsTable
-                startTimestamp = nil
-            }
-
-            // Total calls
-            stats.totalCalls = try db.scalar(filterTable.count)
-
-            // Token sums
-            stats.totalPromptTokens = try db.scalar(filterTable.select(promptTokens.sum)) ?? 0
-            stats.totalCompletionTokens = try db.scalar(filterTable.select(completionTokens.sum)) ?? 0
-            stats.totalTokens = try db.scalar(filterTable.select(totalTokens.sum)) ?? 0
-            if stats.totalTokens == 0 {
-                stats.totalTokens = stats.totalPromptTokens + stats.totalCompletionTokens
-            }
-
-            // Cost sum
-            stats.totalCost = try db.scalar(filterTable.select(estimatedCost.sum)) ?? 0.0
-
-            // Error count
-            stats.errorCount = try db.scalar(
-                filterTable.filter(errorMessage != nil && (errorMessage ?? "") != "").count
-            )
-
-            // Average response time
-            stats.avgResponseTime = try db.scalar(filterTable.select(duration.average)) ?? 0.0
-
-            // Calls and stats by provider
-            var providerQuery = """
-                SELECT provider,
-                       COUNT(*) as cnt,
-                       COALESCE(SUM(total_tokens), 0) as tokens,
-                       COALESCE(SUM(estimated_cost), 0.0) as cost,
-                       COALESCE(AVG(duration), 0.0) as avg_dur
-                FROM logs
-                WHERE provider IS NOT NULL
-            """
-            if let start = startTimestamp {
-                providerQuery += " AND timestamp >= \(start)"
-            }
-            providerQuery += " GROUP BY provider ORDER BY cnt DESC"
-            
-            for row in try db.prepare(providerQuery) {
-                if let pStr = row[0] as? String, let provider = LLMProvider(rawValue: pStr) {
-                    let count = Int(row[1] as? Int64 ?? 0)
-                    let tokens = Int(row[2] as? Int64 ?? 0)
-                    
-                    let costVal = row[3]
-                    let cost = costVal as? Double ?? Double(costVal as? Int64 ?? 0)
-                    
-                    let avgDurVal = row[4]
-                    let avgDur = avgDurVal as? Double ?? Double(avgDurVal as? Int64 ?? 0)
-                    
-                    stats.callsByProvider[provider] = count
-                    stats.providerStats[provider] = ProviderStat(
-                        provider: provider,
-                        count: count,
-                        tokens: tokens,
-                        cost: cost,
-                        avgDuration: avgDur
-                    )
+            do {
+                let filterTable: Table
+                let startTimestamp: Double?
+                if let days = days {
+                    let limitDate: Double
+                    if days == 0 {
+                        limitDate = Calendar.current.startOfDay(for: Date()).timeIntervalSince1970
+                    } else {
+                        limitDate = Date().addingTimeInterval(-Double(days) * 24 * 3600).timeIntervalSince1970
+                    }
+                    filterTable = self.logsTable.filter(self.timestamp >= limitDate)
+                    startTimestamp = limitDate
+                } else {
+                    filterTable = self.logsTable
+                    startTimestamp = nil
                 }
-            }
 
-            // Calls by model
-            var modelQuery = "SELECT model_name, COUNT(*) as cnt FROM logs WHERE model_name IS NOT NULL "
-            if let start = startTimestamp {
-                modelQuery += "AND timestamp >= \(start) "
-            }
-            modelQuery += "GROUP BY model_name ORDER BY cnt DESC LIMIT 20"
-            for row in try db.prepare(modelQuery) {
-                if let mName = row[0] as? String, let count = row[1] as? Int64 {
-                    stats.callsByModel[mName] = Int(count)
+                // Total calls
+                stats.totalCalls = try dbConnection.scalar(filterTable.count)
+
+                // Token sums
+                stats.totalPromptTokens = try dbConnection.scalar(filterTable.select(self.promptTokens.sum)) ?? 0
+                stats.totalCompletionTokens = try dbConnection.scalar(filterTable.select(self.completionTokens.sum)) ?? 0
+                stats.totalTokens = try dbConnection.scalar(filterTable.select(self.totalTokens.sum)) ?? 0
+                if stats.totalTokens == 0 {
+                    stats.totalTokens = stats.totalPromptTokens + stats.totalCompletionTokens
                 }
-            }
 
-            // Tokens by day
-            let daysLimit = days ?? 90
-            let limitVal = Date().addingTimeInterval(-Double(daysLimit) * 24 * 3600).timeIntervalSince1970
-            let dayQuery = """
-                SELECT date(timestamp, 'unixepoch', 'localtime') as day,
-                       COALESCE(SUM(prompt_tokens), 0) as pt,
-                       COALESCE(SUM(completion_tokens), 0) as ct
-                FROM logs
-                WHERE timestamp >= \(limitVal)
-                GROUP BY day
-                ORDER BY day ASC
-            """
-            for row in try db.prepare(dayQuery) {
-                if let dayStr = row[0] as? String,
-                   let pt = row[1] as? Int64,
-                   let ct = row[2] as? Int64 {
-                    let formatter = DateFormatter()
-                    formatter.dateFormat = "yyyy-MM-dd"
-                    if let date = formatter.date(from: dayStr) {
-                        stats.tokensByDay.append(DayTokens(
-                            date: date,
-                            promptTokens: Int(pt),
-                            completionTokens: Int(ct)
-                        ))
+                // Cost sum (Removed)
+
+                // Error count
+                stats.errorCount = try dbConnection.scalar(
+                    filterTable.filter(self.errorMessage != nil && (self.errorMessage ?? "") != "").count
+                )
+
+                // Average response time
+                stats.avgResponseTime = try dbConnection.scalar(filterTable.select(self.duration.average)) ?? 0.0
+
+                // Calls and stats by provider
+                var providerQuery = """
+                    SELECT provider,
+                           COUNT(*) as cnt,
+                           COALESCE(SUM(total_tokens), 0) as tokens,
+                           COALESCE(AVG(duration), 0.0) as avg_dur
+                    FROM logs
+                    WHERE provider IS NOT NULL
+                """
+                if let start = startTimestamp {
+                    providerQuery += " AND timestamp >= \(start)"
+                }
+                providerQuery += " GROUP BY provider ORDER BY cnt DESC"
+                
+                for row in try dbConnection.prepare(providerQuery) {
+                    if let pStr = row[0] as? String, let provider = LLMProvider(rawValue: pStr) {
+                        let count = Int(row[1] as? Int64 ?? 0)
+                        let tokens = Int(row[2] as? Int64 ?? 0)
+                        
+                        let avgDurVal = row[3]
+                        let avgDur = avgDurVal as? Double ?? Double(avgDurVal as? Int64 ?? 0)
+                        
+                        stats.callsByProvider[provider] = count
+                        stats.providerStats[provider] = ProviderStat(
+                            provider: provider,
+                            count: count,
+                            tokens: tokens,
+                            avgDuration: avgDur
+                        )
                     }
                 }
+
+                // Calls by model
+                var modelQuery = "SELECT model_name, COUNT(*) as cnt FROM logs WHERE model_name IS NOT NULL "
+                if let start = startTimestamp {
+                    modelQuery += "AND timestamp >= \(start) "
+                }
+                modelQuery += "GROUP BY model_name ORDER BY cnt DESC LIMIT 20"
+                for row in try dbConnection.prepare(modelQuery) {
+                    if let mName = row[0] as? String, let count = row[1] as? Int64 {
+                        stats.callsByModel[mName] = Int(count)
+                    }
+                }
+
+                // Tokens by day
+                let daysLimit = days ?? 90
+                let limitVal: Double
+                if daysLimit == 0 {
+                    limitVal = Calendar.current.startOfDay(for: Date()).timeIntervalSince1970
+                } else {
+                    limitVal = Date().addingTimeInterval(-Double(daysLimit) * 24 * 3600).timeIntervalSince1970
+                }
+                let dayQuery = """
+                    SELECT date(timestamp, 'unixepoch', 'localtime') as day,
+                           COALESCE(SUM(prompt_tokens), 0) as pt,
+                           COALESCE(SUM(completion_tokens), 0) as ct
+                    FROM logs
+                    WHERE timestamp >= \(limitVal)
+                    GROUP BY day
+                    ORDER BY day ASC
+                """
+                let formatter = DateFormatter()
+                formatter.dateFormat = "yyyy-MM-dd"
+                for row in try dbConnection.prepare(dayQuery) {
+                    if let dayStr = row[0] as? String,
+                       let pt = row[1] as? Int64,
+                       let ct = row[2] as? Int64 {
+                        if let date = formatter.date(from: dayStr) {
+                            stats.tokensByDay.append(DayTokens(
+                                date: date,
+                                promptTokens: Int(pt),
+                                completionTokens: Int(ct)
+                            ))
+                        }
+                    }
+                }
+
+                // Recent logs
+                let recentLogsRows = try dbConnection.prepare(self.logsTable.order(self.timestamp.desc).limit(10))
+                stats.recentLogs = recentLogsRows.map { self.rowToParsedLog($0) }
+
+                // Anomaly Spotlights within the filtered time window
+                if let slowestRow = try dbConnection.pluck(filterTable.filter(self.duration != nil).order(self.duration.desc)) {
+                    stats.slowestLog = self.rowToParsedLog(slowestRow)
+                }
+                
+                // Expensive spotlight removed
+                
+                if let largestRow = try dbConnection.pluck(filterTable.filter(self.totalTokens != nil).order(self.totalTokens.desc)) {
+                    stats.largestPayloadLog = self.rowToParsedLog(largestRow)
+                }
+                
+                stats.localCallsCount = try dbConnection.scalar(
+                    filterTable.filter(self.providerRaw == LLMProvider.ollama.rawValue).count
+                )
+
+                Task { @MainActor in
+                    self.dashboardStats = stats
+                }
+            } catch {
+                Logger.shared.error("Dashboard 统计刷新失败: \(error.localizedDescription)")
             }
-
-            // Recent logs
-            stats.recentLogs = fetchLogs(limit: 10)
-
-        } catch {
-            Logger.shared.error("Dashboard 统计刷新失败: \(error.localizedDescription)")
         }
-
-        dashboardStats = stats
     }
 
     // MARK: - Rate Limit Aggregations
 
     /// 区间内的所有日志（按时间正序），用于滑动窗口/并发计算
-    func fetchLogs(provider: LLMProvider?, since: Date, until: Date = Date()) -> [ParsedLog] {
-        guard let db else { return [] }
-        do {
-            var q = logsTable
-                .filter(timestamp >= since.timeIntervalSince1970 && timestamp <= until.timeIntervalSince1970)
-                .order(timestamp.asc)
-            if let provider {
-                q = q.filter(providerRaw == provider.rawValue)
+    func fetchLogs(provider: LLMProvider?, since: Date, until: Date = Date()) async -> [ParsedLog] {
+        guard let dbConnection = self.db else { return [] }
+        return await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    var q = self.logsTable
+                        .filter(self.timestamp >= since.timeIntervalSince1970 && self.timestamp <= until.timeIntervalSince1970)
+                        .order(self.timestamp.asc)
+                    if let provider {
+                        q = q.filter(self.providerRaw == provider.rawValue)
+                    }
+                    let results = try dbConnection.prepare(q).map { self.rowToParsedLog($0) }
+                    continuation.resume(returning: results)
+                } catch {
+                    Logger.shared.error("区间日志查询失败: \(error.localizedDescription)")
+                    continuation.resume(returning: [])
+                }
             }
-            return try db.prepare(q).map(rowToParsedLog)
-        } catch {
-            Logger.shared.error("区间日志查询失败: \(error.localizedDescription)")
-            return []
         }
     }
 
@@ -611,52 +667,106 @@ final class DatabaseService: ObservableObject {
     struct UsageAggregate {
         var requestCount: Int = 0
         var totalTokens: Int = 0
-        var totalCost: Double = 0
         var avgDuration: Double = 0
     }
 
-    func aggregateUsage(provider: LLMProvider?, since: Date, until: Date = Date()) -> UsageAggregate {
-        guard let db else { return UsageAggregate() }
-        do {
-            var q = logsTable.filter(timestamp >= since.timeIntervalSince1970 && timestamp <= until.timeIntervalSince1970)
-            if let provider {
-                q = q.filter(providerRaw == provider.rawValue)
+    func aggregateUsage(provider: LLMProvider?, since: Date, until: Date = Date()) async -> UsageAggregate {
+        guard let dbConnection = self.db else { return UsageAggregate() }
+        
+        return await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    var q = self.logsTable.filter(self.timestamp >= since.timeIntervalSince1970 && self.timestamp <= until.timeIntervalSince1970)
+                    if let provider {
+                        q = q.filter(self.providerRaw == provider.rawValue)
+                    }
+                    var agg = UsageAggregate()
+                    agg.requestCount = try dbConnection.scalar(q.count)
+                    agg.totalTokens = try dbConnection.scalar(q.select(self.totalTokens.sum)) ?? 0
+                    if agg.totalTokens == 0 {
+                        let pt = try dbConnection.scalar(q.select(self.promptTokens.sum)) ?? 0
+                        let ct = try dbConnection.scalar(q.select(self.completionTokens.sum)) ?? 0
+                        agg.totalTokens = pt + ct
+                    }
+                    agg.avgDuration = try dbConnection.scalar(q.select(self.duration.average)) ?? 0.0
+                    continuation.resume(returning: agg)
+                } catch {
+                    Logger.shared.error("区间聚合失败: \(error.localizedDescription)")
+                    continuation.resume(returning: UsageAggregate())
+                }
             }
-            var agg = UsageAggregate()
-            agg.requestCount = try db.scalar(q.count)
-            agg.totalTokens = try db.scalar(q.select(totalTokens.sum)) ?? 0
-            if agg.totalTokens == 0 {
-                let pt = try db.scalar(q.select(promptTokens.sum)) ?? 0
-                let ct = try db.scalar(q.select(completionTokens.sum)) ?? 0
-                agg.totalTokens = pt + ct
-            }
-            agg.totalCost = try db.scalar(q.select(estimatedCost.sum)) ?? 0.0
-            agg.avgDuration = try db.scalar(q.select(duration.average)) ?? 0.0
-            return agg
-        } catch {
-            Logger.shared.error("区间聚合失败: \(error.localizedDescription)")
-            return UsageAggregate()
         }
     }
 
-    func fetchDistinctModels() -> [String] {
-        guard let db else { return [] }
-        do {
-            return try db.prepare(logsTable.select(distinct: modelName).filter(modelName != nil)).compactMap { $0[modelName] }
-        } catch {
-            return []
+    func fetchDistinctModels() async -> [String] {
+        guard let dbConnection = self.db else { return [] }
+        return await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    let result = try dbConnection.prepare(self.logsTable.select(distinct: self.modelName).filter(self.modelName != nil)).compactMap { $0[self.modelName] }
+                    continuation.resume(returning: result)
+                } catch {
+                    continuation.resume(returning: [])
+                }
+            }
         }
     }
 
-    func fetchDistinctProviders() -> [LLMProvider] {
-        guard let db else { return [] }
-        do {
-            return try db.prepare(logsTable.select(distinct: providerRaw).filter(providerRaw != nil)).compactMap {
-                guard let raw = $0[providerRaw] else { return nil }
-                return LLMProvider(rawValue: raw)
+    func fetchDistinctProviders() async -> [LLMProvider] {
+        guard let dbConnection = self.db else { return [] }
+        return await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    let result = try dbConnection.prepare(self.logsTable.select(distinct: self.providerRaw).filter(self.providerRaw != nil)).compactMap { row -> LLMProvider? in
+                        guard let raw = row[self.providerRaw] else { return nil }
+                        return LLMProvider(rawValue: raw)
+                    }
+                    continuation.resume(returning: result)
+                } catch {
+                    continuation.resume(returning: [])
+                }
             }
-        } catch {
-            return []
+        }
+    }
+
+    func fetchHourlyChartData(provider: LLMProvider) async -> (buckets: [(hour: Int, count: Int)], topModel: String) {
+        guard let dbConnection = self.db else { return ([], "—") }
+        let now = Date()
+        let since = now.addingTimeInterval(-24 * 3600)
+        
+        return await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    var q = self.logsTable
+                        .filter(self.timestamp >= since.timeIntervalSince1970 && self.timestamp <= now.timeIntervalSince1970)
+                        .order(self.timestamp.asc)
+                    if let rawValue = provider.rawValue as String? {
+                        q = q.filter(self.providerRaw == rawValue)
+                    }
+                    let logs = try dbConnection.prepare(q).map { self.rowToParsedLog($0) }
+                    
+                    let calendar = Calendar.current
+                    var counts = [Int: Int]()
+                    for i in 0..<24 { counts[i] = 0 }
+                    var modelCounts = [String: Int]()
+                    
+                    for log in logs {
+                        let hour = calendar.component(.hour, from: log.timestamp)
+                        counts[hour, default: 0] += 1
+                        if let model = log.modelName {
+                            modelCounts[model, default: 0] += 1
+                        }
+                    }
+                    
+                    let buckets = counts.map { (hour: $0.key, count: $0.value) }
+                        .sorted { $0.hour < $1.hour }
+                    let topModel = modelCounts.max(by: { $0.value < $1.value })?.key ?? "—"
+                    
+                    continuation.resume(returning: (buckets, topModel))
+                } catch {
+                    continuation.resume(returning: ([], "—"))
+                }
+            }
         }
     }
 
@@ -694,10 +804,10 @@ final class DatabaseService: ObservableObject {
                 }
                 try handle.write(contentsOf: Data("]".utf8))
             case .csv:
-                try handle.write(contentsOf: Data("id,timestamp,provider,model,promptTokens,completionTokens,totalTokens,cost,duration,error\n".utf8))
+                try handle.write(contentsOf: Data("id,timestamp,provider,model,promptTokens,completionTokens,totalTokens,duration,error\n".utf8))
                 for row in rows {
                     let log = rowToParsedLog(row)
-                    let line = "\(log.id.uuidString),\(log.timestamp.timeIntervalSince1970),\(escapeCSV(log.provider?.displayName ?? "")),\(escapeCSV(log.modelName ?? "")),\(log.promptTokens.map(String.init) ?? ""),\(log.completionTokens.map(String.init) ?? ""),\(log.totalTokens.map(String.init) ?? ""),\(log.estimatedCost.map { String(format: "%.6f", $0) } ?? ""),\(log.duration.map { String(format: "%.3f", $0) } ?? ""),\(escapeCSV(log.errorMessage ?? ""))\n"
+                    let line = "\(log.id.uuidString),\(log.timestamp.timeIntervalSince1970),\(escapeCSV(log.provider?.displayName ?? "")),\(escapeCSV(log.modelName ?? "")),\(log.promptTokens.map(String.init) ?? ""),\(log.completionTokens.map(String.init) ?? ""),\(log.totalTokens.map(String.init) ?? ""),\(log.duration.map { String(format: "%.3f", $0) } ?? ""),\(escapeCSV(log.errorMessage ?? ""))\n"
                     try handle.write(contentsOf: Data(line.utf8))
                 }
             }
@@ -790,7 +900,7 @@ final class DatabaseService: ObservableObject {
         return "\"\(escaped)\""
     }
 
-    private func rowToParsedLog(_ row: Row) -> ParsedLog {
+    nonisolated private func rowToParsedLog(_ row: Row) -> ParsedLog {
         let metadataData = row[metadataJSON].data(using: .utf8) ?? Data("{}".utf8)
         let metadata = (try? JSONSerialization.jsonObject(with: metadataData) as? [String: String]) ?? [:]
 
@@ -810,7 +920,6 @@ final class DatabaseService: ObservableObject {
             promptTokens: row[promptTokens],
             completionTokens: row[completionTokens],
             totalTokens: row[totalTokens],
-            estimatedCost: row[estimatedCost],
             duration: row[duration],
             statusCode: row[statusCode],
             errorMessage: row[errorMessage],

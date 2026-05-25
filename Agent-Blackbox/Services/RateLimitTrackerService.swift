@@ -19,10 +19,12 @@ final class RateLimitTrackerService: ObservableObject {
 
     func start() {
         stop()
-        refresh()
+        Task { @MainActor in
+            await refresh()
+        }
         let interval = config?.config.rateSamplingInterval ?? 5.0
         let t = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.refresh() }
+            Task { @MainActor in await self?.refresh() }
         }
         RunLoop.main.add(t, forMode: .common)
         timer = t
@@ -35,17 +37,17 @@ final class RateLimitTrackerService: ObservableObject {
 
     // MARK: - Refresh
 
-    func refresh() {
+    func refresh() async {
         guard let database, let config else { return }
         let now = Date()
         let limits = config.config.providerRateLimits
 
         // 仅显示出现过日志的 provider（避免 15 个空卡片）
-        let activeProviders = database.fetchDistinctProviders()
+        let activeProviders = await database.fetchDistinctProviders()
         var newSnapshots: [ProviderUsageSnapshot] = []
         for provider in activeProviders {
             let limit = limits[provider.rawValue] ?? ProviderRateLimit.defaultLocal
-            let snap = computeSnapshot(provider: provider, limit: limit, now: now, database: database)
+            let snap = await computeSnapshot(provider: provider, limit: limit, now: now, database: database)
             newSnapshots.append(snap)
         }
         // 按 24h 调用量倒序
@@ -53,7 +55,7 @@ final class RateLimitTrackerService: ObservableObject {
 
         // 全局汇总（不区分 provider，用合并后的最大 limit 总和）
         let aggregateLimit = aggregateGlobalLimit(from: limits, activeProviders: activeProviders)
-        let global = computeSnapshot(provider: nil, limit: aggregateLimit, now: now, database: database)
+        let global = await computeSnapshot(provider: nil, limit: aggregateLimit, now: now, database: database)
 
         snapshots = newSnapshots
         globalSnapshot = global
@@ -62,7 +64,7 @@ final class RateLimitTrackerService: ObservableObject {
 
     // MARK: - Snapshot Computation
 
-    private func computeSnapshot(provider: LLMProvider?, limit: ProviderRateLimit, now: Date, database: DatabaseService) -> ProviderUsageSnapshot {
+    private func computeSnapshot(provider: LLMProvider?, limit: ProviderRateLimit, now: Date, database: DatabaseService) async -> ProviderUsageSnapshot {
         // 滑动窗口时间点
         let oneMinAgo  = now.addingTimeInterval(-60)
         let oneHourAgo = now.addingTimeInterval(-3600)
@@ -70,7 +72,7 @@ final class RateLimitTrackerService: ObservableObject {
         let monthStart = startOfMonth(now)
 
         // 拉取最近 1 小时的明细日志（用于并发/RPM/TPM）
-        let logs1h = database.fetchLogs(provider: provider, since: oneHourAgo, until: now)
+        let logs1h = await database.fetchLogs(provider: provider, since: oneHourAgo, until: now)
         let logs1m = logs1h.filter { $0.timestamp >= oneMinAgo }
 
         // 1分钟聚合
@@ -82,8 +84,8 @@ final class RateLimitTrackerService: ObservableObject {
         let tok1h = logs1h.reduce(0) { $0 + ($1.totalTokens ?? (($1.promptTokens ?? 0) + ($1.completionTokens ?? 0))) }
 
         // 当日聚合（从 DB 直接聚合，避免拉太多行）
-        let dayAgg   = database.aggregateUsage(provider: provider, since: dayStart, until: now)
-        let monthAgg = database.aggregateUsage(provider: provider, since: monthStart, until: now)
+        let dayAgg   = await database.aggregateUsage(provider: provider, since: dayStart, until: now)
+        let monthAgg = await database.aggregateUsage(provider: provider, since: monthStart, until: now)
 
         // 构造各窗口
         var windows: [RateWindow] = []
@@ -121,7 +123,7 @@ final class RateLimitTrackerService: ObservableObject {
         // 5 小时请求窗口（Kimi 等消费套餐的滑动窗口）
         if let req5h = limit.fiveHourRequestLimit {
             let fiveHourAgo = now.addingTimeInterval(-5 * 3600)
-            let logs5h = database.fetchLogs(provider: provider, since: fiveHourAgo, until: now)
+            let logs5h = await database.fetchLogs(provider: provider, since: fiveHourAgo, until: now)
             windows.append(makeWindow(.requests5h, used: Double(logs5h.count), limit: Double(req5h),
                                       unit: "req", resetsAt: now.addingTimeInterval(5 * 3600), windowMin: 5 * 60))
         }

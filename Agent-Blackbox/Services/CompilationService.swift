@@ -327,7 +327,6 @@ final class CompilationService: ObservableObject {
         final.compiledProviders = stats.providers
         final.compiledModels = stats.models
         final.compiledTokenTotal = stats.totalTokens
-        final.compiledCostTotal = stats.totalCost
         final.updatedAt = Date()
         saveCompilation(final)
         loadCompilations()
@@ -405,7 +404,6 @@ final class CompilationService: ObservableObject {
         final.compiledProviders = existingProviders
         final.compiledModels = existingModels
         final.compiledTokenTotal += appendStats.totalTokens
-        final.compiledCostTotal += appendStats.totalCost
 
         saveCompilation(final)
         loadCompilations()
@@ -521,7 +519,6 @@ final class CompilationService: ObservableObject {
                     promptTokens: row[promptTokensCol],
                     completionTokens: row[completionTokensCol],
                     totalTokens: row[totalTokensCol],
-                    estimatedCost: row[estimatedCostCol],
                     duration: row[durationCol],
                     statusCode: row[statusCodeCol],
                     errorMessage: row[errorMessageCol],
@@ -651,17 +648,16 @@ final class CompilationService: ObservableObject {
             let time = tf.string(from: log.timestamp)
             let model = log.modelName ?? "unknown"
             let tokens = log.totalTokens.map { "\($0) tokens" } ?? ""
-            let cost = log.estimatedCost.map { $0.formattedCurrency } ?? ""
             let duration = log.duration.map { $0.formattedDuration } ?? ""
 
             if let prompt = log.prompt, !prompt.isEmpty {
-                let meta = [tokens, cost].filter { !$0.isEmpty }.joined(separator: " | ")
+                let meta = tokens
                 parts.append("**[\(time)] User** (\(model)\(meta.isEmpty ? "" : " | \(meta)")):\n")
                 parts.append("\n\(prompt.trimmingCharacters(in: .whitespacesAndNewlines))\n")
             }
 
             if let response = log.response, !response.isEmpty {
-                let meta = [duration, tokens, cost].filter { !$0.isEmpty }.joined(separator: " | ")
+                let meta = [duration, tokens].filter { !$0.isEmpty }.joined(separator: " | ")
                 parts.append("**[\(time)] Assistant** (\(meta.isEmpty ? "" : "\(meta)")):\n")
                 parts.append("\n\(response.trimmingCharacters(in: .whitespacesAndNewlines))\n")
             }
@@ -688,7 +684,6 @@ final class CompilationService: ObservableObject {
             if let p = log.prompt { obj["prompt"] = p }
             if let r = log.response { obj["response"] = r }
             if let t = log.totalTokens { obj["tokens"] = t }
-            if let c = log.estimatedCost { obj["cost"] = c }
             if let d = log.duration { obj["duration"] = d }
             if let e = log.errorMessage { obj["error"] = e }
             turns.append(obj)
@@ -762,7 +757,6 @@ final class CompilationService: ObservableObject {
             | 提供商数 | \(stats.providers.count) |
             | 模型数 | \(stats.models.count) |
             | 总 Token | \(stats.totalTokens.formattedCompact) |
-            | 预估费用 | \(stats.totalCost.formattedCurrency) |
             | 错误数 | \(stats.errorCount) |
 
             _本文档由 Agent Blackbox 自动生成于 \(Date().formattedDate)_
@@ -775,14 +769,13 @@ final class CompilationService: ObservableObject {
                 + "  \"providers\": \(stats.providers.count),\n"
                 + "  \"models\": \(stats.models.count),\n"
                 + "  \"totalTokens\": \(stats.totalTokens),\n"
-                + "  \"totalCost\": \(stats.totalCost),\n"
                 + "  \"errors\": \(stats.errorCount)\n"
                 + "}\n}\n"
         case .plainText:
             return """
 
             ---
-            统计: \(totalLogs) 条日志 | \(stats.providers.count) 个提供商 | \(stats.totalTokens.formattedCompact) tokens | \(stats.totalCost.formattedCurrency) | \(stats.errorCount) 个错误
+            统计: \(totalLogs) 条日志 | \(stats.providers.count) 个提供商 | \(stats.totalTokens.formattedCompact) tokens | \(stats.errorCount) 个错误
             生成于 \(Date().formattedDate)
             """
         }
@@ -794,7 +787,6 @@ final class CompilationService: ObservableObject {
         var providers: [String]
         var models: [String]
         var totalTokens: Int
-        var totalCost: Double
         var errorCount: Int
     }
 
@@ -802,14 +794,12 @@ final class CompilationService: ObservableObject {
         var providers = Set<String>()
         var models = Set<String>()
         var totalTokens = 0
-        var totalCost = 0.0
         var errorCount = 0
 
         for log in logs {
             if let p = log.provider { providers.insert(p.rawValue) }
             if let m = log.modelName { models.insert(m) }
             totalTokens += log.totalTokens ?? 0
-            totalCost += log.estimatedCost ?? 0
             if log.errorMessage != nil { errorCount += 1 }
         }
 
@@ -817,7 +807,6 @@ final class CompilationService: ObservableObject {
             providers: providers.sorted(),
             models: models.sorted(),
             totalTokens: totalTokens,
-            totalCost: totalCost,
             errorCount: errorCount
         )
     }
@@ -876,7 +865,7 @@ final class CompilationService: ObservableObject {
                 colCompiledProviders <- compProviders,
                 colCompiledModels <- compModels,
                 colCompiledTokenTotal <- compilation.compiledTokenTotal,
-                colCompiledCostTotal <- compilation.compiledCostTotal
+                colCompiledCostTotal <- 0.0
             ]
 
             if count > 0 {
@@ -915,8 +904,7 @@ final class CompilationService: ObservableObject {
             outputFileSize: row[colOutputSize],
             compiledProviders: cProviders,
             compiledModels: cModels,
-            compiledTokenTotal: row[colCompiledTokenTotal],
-            compiledCostTotal: row[colCompiledCostTotal]
+            compiledTokenTotal: row[colCompiledTokenTotal]
         )
     }
 }

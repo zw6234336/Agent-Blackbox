@@ -36,7 +36,6 @@ struct ClineParser: LogParser {
         
         var tokensIn: Int? = nil
         var tokensOut: Int? = nil
-        var totalCost: Double? = nil
         var taskTimestamp: Date? = nil
         
         if let historyData = try? Data(contentsOf: taskHistoryURL),
@@ -44,7 +43,6 @@ struct ClineParser: LogParser {
             if let taskItem = historyArray.first(where: { ($0["id"] as? String) == conversationId }) {
                 tokensIn = taskItem["tokensIn"] as? Int
                 tokensOut = taskItem["tokensOut"] as? Int
-                totalCost = taskItem["totalCost"] as? Double
                 if let tsVal = taskItem["ts"] as? Double {
                     taskTimestamp = Date(timeIntervalSince1970: tsVal / 1000.0)
                 }
@@ -78,7 +76,6 @@ struct ClineParser: LogParser {
                 let isLast = (index == lastAssistantIndex)
                 let promptTokens = isLast ? tokensIn : nil
                 let completionTokens = isLast ? tokensOut : nil
-                let cost = isLast ? totalCost : nil
                 let total = isLast ? ((tokensIn ?? 0) + (tokensOut ?? 0) > 0 ? (tokensIn ?? 0) + (tokensOut ?? 0) : nil) : nil
                 
                 results.append(ParsedLog(
@@ -91,7 +88,6 @@ struct ClineParser: LogParser {
                     promptTokens: promptTokens,
                     completionTokens: completionTokens,
                     totalTokens: total,
-                    estimatedCost: cost,
                     conversationId: conversationId,
                     metadata: ["format": "cline_json", "role": role, "client": "cline"]
                 ))

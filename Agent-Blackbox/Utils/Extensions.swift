@@ -81,26 +81,38 @@ extension Double {
 
 // MARK: - Date Formatting
 extension Date {
-    /// Relative time description: "2分钟前", "3小时前"
-    var formattedRelative: String {
+    private static let relativeFormatter: RelativeDateTimeFormatter = {
         let formatter = RelativeDateTimeFormatter()
         formatter.locale = Locale(identifier: "zh_CN")
         formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: self, relativeTo: Date())
+        return formatter
+    }()
+
+    private static let shortDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MM-dd HH:mm"
+        return formatter
+    }()
+
+    private static let dateOnlyFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
+
+    /// Relative time description: "2分钟前", "3小时前"
+    var formattedRelative: String {
+        Date.relativeFormatter.localizedString(for: self, relativeTo: Date())
     }
 
     /// Short date+time
     var formattedShort: String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MM-dd HH:mm"
-        return formatter.string(from: self)
+        Date.shortDateFormatter.string(from: self)
     }
 
     /// Date only
     var formattedDate: String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.string(from: self)
+        Date.dateOnlyFormatter.string(from: self)
     }
 }
 

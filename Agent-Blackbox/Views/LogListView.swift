@@ -68,8 +68,10 @@ struct LogListView: View {
         .task {
             await database.reloadLogs()
             refreshFilteredLogs()
-            availableModels = database.fetchDistinctModels()
-            availableProviders = database.fetchDistinctProviders()
+            let models = await database.fetchDistinctModels()
+            let providers = await database.fetchDistinctProviders()
+            availableModels = models
+            availableProviders = providers
         }
         .onChange(of: searchText) {
             // 搜索框有输入时使用防抖，避免每次击键都触发 DB 查询
@@ -93,8 +95,10 @@ struct LogListView: View {
                 guard !Task.isCancelled else { return }
                 refreshFilteredLogs()
                 if !searchText.isEmpty { refreshSearchResults() }
-                availableModels = database.fetchDistinctModels()
-                availableProviders = database.fetchDistinctProviders()
+                let models = await database.fetchDistinctModels()
+                let providers = await database.fetchDistinctProviders()
+                availableModels = models
+                availableProviders = providers
             }
 
             if let selectedLogID, !database.logs.contains(where: { $0.id == selectedLogID }) {
@@ -184,7 +188,7 @@ struct LogListView: View {
             let hasFilter = filterProvider != nil || filterModel != nil || filterHasError != nil || filterBookmarked
             let result: [ParsedLog]
             if hasFilter {
-                result = database.filterLogs(
+                result = await database.filterLogs(
                     provider: filterProvider,
                     model: filterModel,
                     hasError: filterHasError,
@@ -203,7 +207,10 @@ struct LogListView: View {
             searchResults = []
             return
         }
-        searchResults = database.searchLogs(query: searchText)
+        Task {
+            let results = await database.searchLogs(query: searchText)
+            self.searchResults = results
+        }
     }
 }
 
@@ -245,11 +252,6 @@ struct LogListRow: View {
                             .foregroundStyle(.secondary)
                     }
                     
-                    if let cost = log.estimatedCost {
-                        Text(cost.formattedCurrency)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
 
                     if log.errorMessage != nil {
                         Image(systemName: "exclamationmark.circle.fill")

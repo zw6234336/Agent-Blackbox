@@ -30,7 +30,10 @@ struct CompilationView: View {
         }
         .onAppear {
             compilationService.initializeIfNeeded()
-            availableProviders = database.fetchDistinctProviders()
+            Task {
+                let providers = await database.fetchDistinctProviders()
+                self.availableProviders = providers
+            }
         }
     }
 
@@ -363,7 +366,6 @@ struct CompilationView: View {
                 LazyVGrid(columns: [
                     GridItem(.flexible()),
                     GridItem(.flexible()),
-                    GridItem(.flexible()),
                     GridItem(.flexible())
                 ], spacing: 12) {
                     CompilationStatCard(
@@ -377,12 +379,6 @@ struct CompilationView: View {
                         value: comp.compiledTokenTotal.formattedCompact,
                         icon: "textformat.abc",
                         color: .accentGradientStart
-                    )
-                    CompilationStatCard(
-                        title: "预估费用",
-                        value: comp.compiledCostTotal.formattedCurrency,
-                        icon: "dollarsign.circle",
-                        color: .successGreen
                     )
                     CompilationStatCard(
                         title: "供应商 / 模型",
