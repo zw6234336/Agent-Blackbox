@@ -533,8 +533,7 @@ struct NewCompilationSheet: View {
         .padding()
         .frame(width: 420, height: 480)
         .onAppear {
-            NSApp.activate(ignoringOtherApps: true)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 focusedField = .name
             }
         }

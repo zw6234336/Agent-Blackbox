@@ -215,8 +215,7 @@ struct NewCollectionSheet: View {
         .padding()
         .frame(width: 350)
         .onAppear {
-            NSApp.activate(ignoringOtherApps: true)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 focusedField = .name
             }
         }
