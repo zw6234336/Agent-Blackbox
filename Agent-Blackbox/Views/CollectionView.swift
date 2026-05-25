@@ -3,30 +3,38 @@ import SwiftUI
 struct CollectionView: View {
     @EnvironmentObject var database: DatabaseService
     @State private var selectedCollection: LogCollection?
-    @State private var showNewCollectionSheet = false
-    @State private var newCollectionName = ""
-    @State private var newCollectionDesc = ""
     @State private var collectionLogs: [ParsedLog] = []
 
     var body: some View {
-        NavigationSplitView {
+        HStack(spacing: 0) {
             collectionsSidebar
-        } detail: {
-            if let collection = selectedCollection {
-                collectionDetail(collection)
-            } else {
-                emptyState
+                .frame(minWidth: 200, idealWidth: 240, maxWidth: 300)
+                .background(Color(nsColor: NSColor.windowBackgroundColor))
+            
+            Divider()
+            
+            Group {
+                if let collection = selectedCollection {
+                    collectionDetail(collection)
+                } else {
+                    emptyState
+                }
             }
-        }
-        .sheet(isPresented: $showNewCollectionSheet) {
-            newCollectionSheet
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color.dashboardBackground)
         }
     }
 
     // MARK: - Sidebar
 
     private var collectionsSidebar: some View {
-        VStack {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("收藏管理")
+                .font(.headline)
+                .padding(.horizontal, 16)
+                .padding(.top, 16)
+                .padding(.bottom, 8)
+
             List(selection: $selectedCollection) {
                 Section("收藏夹") {
                     ForEach(database.collections) { collection in
@@ -67,11 +75,13 @@ struct CollectionView: View {
                     }
                 }
             }
-            .navigationTitle("收藏管理")
+            .listStyle(.sidebar)
 
             Divider()
 
-            Button(action: { showNewCollectionSheet = true }) {
+            Button(action: {
+                NotificationCenter.default.post(name: Notification.Name("ShowNewCollectionSheet"), object: nil)
+            }) {
                 Label("新建收藏夹", systemImage: "plus.circle.fill")
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -158,43 +168,58 @@ struct CollectionView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+}
 
-    // MARK: - New Collection Sheet
+struct NewCollectionSheet: View {
+    let onCancel: () -> Void
+    let onCreate: (String, String) -> Void
 
-    private var newCollectionSheet: some View {
+    @State private var name = ""
+    @State private var description = ""
+    @FocusState private var focusedField: Field?
+
+    private enum Field {
+        case name
+        case description
+    }
+
+    var body: some View {
         VStack(spacing: 16) {
             Text("新建收藏夹")
                 .font(.headline)
 
-            TextField("名称", text: $newCollectionName)
+            TextField("名称", text: $name)
                 .textFieldStyle(.roundedBorder)
+                .focused($focusedField, equals: .name)
 
-            TextField("描述（可选）", text: $newCollectionDesc)
+            TextField("描述（可选）", text: $description)
                 .textFieldStyle(.roundedBorder)
+                .focused($focusedField, equals: .description)
 
             HStack {
                 Button("取消") {
-                    showNewCollectionSheet = false
-                    newCollectionName = ""
-                    newCollectionDesc = ""
+                    onCancel()
                 }
                 .keyboardShortcut(.cancelAction)
 
                 Spacer()
 
                 Button("创建") {
-                    guard !newCollectionName.isEmpty else { return }
-                    database.createCollection(name: newCollectionName, description: newCollectionDesc)
-                    newCollectionName = ""
-                    newCollectionDesc = ""
-                    showNewCollectionSheet = false
+                    guard !name.isEmpty else { return }
+                    onCreate(name, description)
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(newCollectionName.isEmpty)
+                .disabled(name.isEmpty)
             }
         }
         .padding()
         .frame(width: 350)
+        .onAppear {
+            NSApp.activate(ignoringOtherApps: true)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                focusedField = .name
+            }
+        }
     }
 }
 

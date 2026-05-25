@@ -14,7 +14,6 @@ struct DashboardView: View {
     @EnvironmentObject var clientInterception: ClientInterceptionService
 
     @AppStorage("dashboardTimeRange") private var timeRange: DashboardTimeRange = .today
-    @State private var selectedLogForDetail: ParsedLog? = nil
     @State private var isRefreshing = false
 
     enum DistributionViewMode: String, CaseIterable, Identifiable {
@@ -61,11 +60,6 @@ struct DashboardView: View {
             .padding(20)
         }
         .background(Color.dashboardBackground)
-        .sheet(item: $selectedLogForDetail) { log in
-            LogDetailView(log: log, isModal: true)
-                .environmentObject(database)
-                .frame(minWidth: 600, minHeight: 650)
-        }
         .task {
             database.refreshDashboardStats(days: daysForRange(timeRange))
         }
@@ -300,7 +294,7 @@ struct DashboardView: View {
     ) -> some View {
         Button(action: {
             if let log = log {
-                selectedLogForDetail = log
+                NotificationCenter.default.post(name: Notification.Name("ShowLogDetailSheet"), object: log)
             }
         }) {
             VStack(alignment: .leading, spacing: 8) {
@@ -856,7 +850,7 @@ struct DashboardView: View {
                 VStack(spacing: 8) {
                     ForEach(stats.recentLogs.prefix(6)) { log in
                         LiveFeedRow(log: log) {
-                            selectedLogForDetail = log
+                            NotificationCenter.default.post(name: Notification.Name("ShowLogDetailSheet"), object: log)
                         }
                     }
                 }

@@ -77,6 +77,9 @@ struct LogDetailView: View {
         }
         .textSelection(.enabled)
         .onAppear {
+            if isModal {
+                NSApp.activate(ignoringOtherApps: true)
+            }
             notesText = log.notes ?? ""
         }
     }

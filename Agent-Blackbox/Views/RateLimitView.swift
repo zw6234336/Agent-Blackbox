@@ -17,7 +17,6 @@ struct RateLimitView: View {
     @EnvironmentObject var database: DatabaseService
     @EnvironmentObject var planDetector: PlanDetectionService
 
-    @State private var editingProvider: LLMProvider? = nil
     @State private var showingApplyConfirm = false
     @State private var selectedTab: RateLimitTab = .overview
 
@@ -49,7 +48,7 @@ struct RateLimitView: View {
                             ProviderDetailView(
                                 snapshot: snap,
                                 detectedPlan: planDetector.detectedPlans[p],
-                                onEdit: { editingProvider = p }
+                                onEdit: { NotificationCenter.default.post(name: Notification.Name("ShowRateLimitEditorSheet"), object: p) }
                             )
                             .id(p) // force rebuild on tab switch
                             .transition(.opacity.combined(with: .move(edge: .trailing)))
@@ -81,12 +80,6 @@ struct RateLimitView: View {
                     selectedTab = .overview
                 }
             }
-        }
-        .sheet(item: $editingProvider) { provider in
-            RateLimitEditor(provider: provider)
-                .environmentObject(configService)
-                .environmentObject(tracker)
-                .frame(minWidth: 460, minHeight: 520)
         }
     }
 
@@ -1114,7 +1107,10 @@ struct RateLimitEditor: View {
                 .font(.caption).foregroundStyle(.secondary)
         }
         .padding(20)
-        .onAppear(perform: load)
+        .onAppear {
+            NSApp.activate(ignoringOtherApps: true)
+            load()
+        }
     }
 
     private func field(_ title: String, _ binding: Binding<String>, placeholder: String) -> some View {

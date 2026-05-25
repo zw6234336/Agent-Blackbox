@@ -6,7 +6,18 @@ struct ContentView: View {
     @EnvironmentObject var configService: ConfigService
     @EnvironmentObject var compilationService: CompilationService
     @EnvironmentObject var proxyServer: ProxyServerService
+    @EnvironmentObject var tracker: RateLimitTrackerService
     @State private var selectedTab = 0
+
+    // Sheet states
+    @State private var showNewCompilationSheet = false
+    @State private var availableProviders: [LLMProvider] = []
+    
+    @State private var showNewCollectionSheet = false
+    
+    @State private var editingProvider: LLMProvider? = nil
+    
+    @State private var selectedLogForDetail: ParsedLog? = nil
 
     var body: some View {
         NavigationSplitView {
@@ -122,6 +133,70 @@ struct ContentView: View {
                     }
                 }
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("ShowNewCompilationSheet"))) { notification in
+            if let providers = notification.object as? [LLMProvider] {
+                self.availableProviders = providers
+            }
+            showNewCompilationSheet = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("ShowNewCollectionSheet"))) { _ in
+            showNewCollectionSheet = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("ShowLogDetailSheet"))) { notification in
+            if let log = notification.object as? ParsedLog {
+                selectedLogForDetail = log
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("ShowRateLimitEditorSheet"))) { notification in
+            if let provider = notification.object as? LLMProvider {
+                editingProvider = provider
+            }
+        }
+        .sheet(isPresented: $showNewCompilationSheet) {
+            NewCompilationSheet(
+                availableProviders: availableProviders,
+                onCancel: {
+                    showNewCompilationSheet = false
+                },
+                onCreate: { draft in
+                    showNewCompilationSheet = false
+                    compilationService.initializeIfNeeded()
+                    let created = compilationService.createCompilation(
+                        name: draft.name,
+                        description: draft.description,
+                        format: draft.format,
+                        providers: draft.providers.compactMap { LLMProvider(rawValue: $0) },
+                        startDate: draft.hasStartDate ? draft.startDate : nil,
+                        endDate: draft.hasEndDate ? draft.endDate : nil,
+                        bookmarkedOnly: draft.bookmarkedOnly
+                    )
+                    compilationService.startGeneration(id: created.id)
+                    NotificationCenter.default.post(name: Notification.Name("SelectCompilation"), object: created)
+                }
+            )
+        }
+        .sheet(isPresented: $showNewCollectionSheet) {
+            NewCollectionSheet(
+                onCancel: {
+                    showNewCollectionSheet = false
+                },
+                onCreate: { name, desc in
+                    database.createCollection(name: name, description: desc)
+                    showNewCollectionSheet = false
+                }
+            )
+        }
+        .sheet(item: $editingProvider) { provider in
+            RateLimitEditor(provider: provider)
+                .environmentObject(configService)
+                .environmentObject(tracker)
+                .frame(minWidth: 460, minHeight: 520)
+        }
+        .sheet(item: $selectedLogForDetail) { log in
+            LogDetailView(log: log, isModal: true)
+                .environmentObject(database)
+                .frame(minWidth: 600, minHeight: 650)
         }
     }
 

@@ -4,35 +4,31 @@ struct CompilationView: View {
     @EnvironmentObject var compilationService: CompilationService
     @EnvironmentObject var database: DatabaseService
     @State private var selectedCompilation: LogCompilation?
-    @State private var showNewSheet = false
-    @State private var availableProviders: [LLMProvider] = []
 
     var body: some View {
-        NavigationSplitView {
+        HStack(spacing: 0) {
             sidebar
-        } detail: {
-            if let comp = selectedCompilation {
-                detailView(comp)
-            } else {
-                emptyState
-            }
-        }
-        .sheet(isPresented: $showNewSheet) {
-            NewCompilationSheet(
-                availableProviders: availableProviders,
-                onCancel: {
-                    showNewSheet = false
-                },
-                onCreate: { draft in
-                    createCompilation(from: draft)
+                .frame(minWidth: 200, idealWidth: 240, maxWidth: 300)
+                .background(Color(nsColor: NSColor.windowBackgroundColor))
+            
+            Divider()
+            
+            Group {
+                if let comp = selectedCompilation {
+                    detailView(comp)
+                } else {
+                    emptyState
                 }
-            )
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color.dashboardBackground)
         }
         .onAppear {
             compilationService.initializeIfNeeded()
-            Task {
-                let providers = await database.fetchDistinctProviders()
-                self.availableProviders = providers
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("SelectCompilation"))) { notification in
+            if let comp = notification.object as? LogCompilation {
+                self.selectedCompilation = comp
             }
         }
     }
@@ -40,7 +36,13 @@ struct CompilationView: View {
     // MARK: - Sidebar
 
     private var sidebar: some View {
-        VStack {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("日志编译")
+                .font(.headline)
+                .padding(.horizontal, 16)
+                .padding(.top, 16)
+                .padding(.bottom, 8)
+
             List(selection: Binding(
                 get: { selectedCompilation?.id },
                 set: { newId in
@@ -110,11 +112,16 @@ struct CompilationView: View {
                     }
                 }
             }
-            .navigationTitle("日志编译")
+            .listStyle(.sidebar)
 
             Divider()
 
-            Button(action: { showNewSheet = true }) {
+            Button(action: {
+                Task {
+                    let providers = await database.fetchDistinctProviders()
+                    NotificationCenter.default.post(name: Notification.Name("ShowNewCompilationSheet"), object: providers)
+                }
+            }) {
                 Label("新建编译", systemImage: "plus.circle.fill")
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -138,27 +145,14 @@ struct CompilationView: View {
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
             Button("新建编译") {
-                showNewSheet = true
+                Task {
+                    let providers = await database.fetchDistinctProviders()
+                    NotificationCenter.default.post(name: Notification.Name("ShowNewCompilationSheet"), object: providers)
+                }
             }
             .buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private func createCompilation(from draft: NewCompilationDraft) {
-        compilationService.initializeIfNeeded()
-        let created = compilationService.createCompilation(
-            name: draft.name,
-            description: draft.description,
-            format: draft.format,
-            providers: draft.providers.compactMap { LLMProvider(rawValue: $0) },
-            startDate: draft.hasStartDate ? draft.startDate : nil,
-            endDate: draft.hasEndDate ? draft.endDate : nil,
-            bookmarkedOnly: draft.bookmarkedOnly
-        )
-        showNewSheet = false
-        selectedCompilation = created
-        compilationService.startGeneration(id: created.id)
     }
 
     // MARK: - Detail View
@@ -426,7 +420,7 @@ struct CompilationView: View {
     }
 }
 
-private struct NewCompilationDraft {
+struct NewCompilationDraft {
     var name = ""
     var description = ""
     var format: CompilationOutputFormat = .markdown
@@ -438,7 +432,7 @@ private struct NewCompilationDraft {
     var bookmarkedOnly = false
 }
 
-private struct NewCompilationSheet: View {
+struct NewCompilationSheet: View {
     let availableProviders: [LLMProvider]
     let onCancel: () -> Void
     let onCreate: (NewCompilationDraft) -> Void
@@ -539,7 +533,10 @@ private struct NewCompilationSheet: View {
         .padding()
         .frame(width: 420, height: 480)
         .onAppear {
-            focusedField = .name
+            NSApp.activate(ignoringOtherApps: true)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                focusedField = .name
+            }
         }
     }
 }
