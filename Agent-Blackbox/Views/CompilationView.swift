@@ -178,6 +178,7 @@ struct CompilationView: View {
             }
             .padding()
         }
+        .scrollWheelKeepAlive()
         .onChange(of: compilationService.compilations) {
             // Refresh selected when compilations update
             if let sel = selectedCompilation,
@@ -410,6 +411,7 @@ struct CompilationView: View {
                             .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
+                    .scrollWheelKeepAlive()
                     .frame(maxHeight: 400)
                 } else {
                     Text("无法读取输出文件")

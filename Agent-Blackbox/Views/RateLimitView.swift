@@ -59,6 +59,7 @@ struct RateLimitView: View {
                 }
                 .animation(.easeInOut(duration: 0.25), value: selectedTab)
             }
+            .scrollWheelKeepAlive()
             .background(Color.dashboardBackground)
         }
         .onAppear {

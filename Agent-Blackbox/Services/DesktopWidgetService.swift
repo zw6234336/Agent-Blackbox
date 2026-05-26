@@ -192,39 +192,53 @@ struct DesktopWidgetView: View {
 
 struct MiniPulseWaveView: View {
     let isActive: Bool
-    
+    @Environment(\.scenePhase) private var scenePhase
+
     var body: some View {
-        TimelineView(.animation) { timeline in
-            Canvas { context, size in
-                let width = size.width
-                let height = size.height
-                let midY = height / 2.0
-                
-                var path = Path()
-                path.move(to: CGPoint(x: 0, y: midY))
-                
-                let time = timeline.date.timeIntervalSinceReferenceDate
-                let freq: CGFloat = isActive ? 0.15 : 0.04
-                let amp: CGFloat = isActive ? 6.0 : 1.0
-                let speed: CGFloat = isActive ? 12.0 : 2.0
-                
-                for x in stride(from: 0, to: width, by: 1.5) {
-                    let relativeX = x / width
-                    let fade = sin(relativeX * .pi)
-                    let y = midY + sin(x * freq - CGFloat(time) * speed) * amp * fade
-                    path.addLine(to: CGPoint(x: x, y: y))
-                }
-                
-                context.stroke(
-                    path,
-                    with: .linearGradient(
-                        Gradient(colors: isActive ? [.blue, .purple, .pink] : [.secondary.opacity(0.2)]),
-                        startPoint: CGPoint(x: 0, y: midY),
-                        endPoint: CGPoint(x: width, y: midY)
-                    ),
-                    style: StrokeStyle(lineWidth: isActive ? 1.5 : 0.8, lineCap: .round)
-                )
+        // See PulseWaveView for the rationale: a long-running
+        // `TimelineView(.animation)` mounted in the app for hours can
+        // break trackpad/scroll-wheel event delivery to SwiftUI
+        // ScrollViews app-wide. Throttle to 24 Hz when active and
+        // render a static frame otherwise.
+        if isActive && scenePhase == .active {
+            TimelineView(.periodic(from: Date(), by: 1.0 / 24.0)) { timeline in
+                waveCanvas(date: timeline.date)
             }
+        } else {
+            waveCanvas(date: Date(timeIntervalSinceReferenceDate: 0))
+        }
+    }
+    
+    private func waveCanvas(date: Date) -> some View {
+        Canvas { context, size in
+            let width = size.width
+            let height = size.height
+            let midY = height / 2.0
+            
+            var path = Path()
+            path.move(to: CGPoint(x: 0, y: midY))
+            
+            let time = date.timeIntervalSinceReferenceDate
+            let freq: CGFloat = isActive ? 0.15 : 0.04
+            let amp: CGFloat = isActive ? 6.0 : 1.0
+            let speed: CGFloat = isActive ? 12.0 : 2.0
+            
+            for x in stride(from: 0, to: width, by: 1.5) {
+                let relativeX = x / width
+                let fade = sin(relativeX * .pi)
+                let y = midY + sin(x * freq - CGFloat(time) * speed) * amp * fade
+                path.addLine(to: CGPoint(x: x, y: y))
+            }
+            
+            context.stroke(
+                path,
+                with: .linearGradient(
+                    Gradient(colors: isActive ? [.blue, .purple, .pink] : [.secondary.opacity(0.2)]),
+                    startPoint: CGPoint(x: 0, y: midY),
+                    endPoint: CGPoint(x: width, y: midY)
+                ),
+                style: StrokeStyle(lineWidth: isActive ? 1.5 : 0.8, lineCap: .round)
+            )
         }
     }
 }

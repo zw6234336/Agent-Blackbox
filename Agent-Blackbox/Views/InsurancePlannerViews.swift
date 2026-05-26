@@ -24,6 +24,7 @@ struct InsuranceDashboardView: View {
             }
             .padding(24)
         }
+        .scrollWheelKeepAlive()
         .background(InsurancePalette.background.ignoresSafeArea())
     }
 
@@ -133,6 +134,7 @@ struct MyCoverageView: View {
             }
             .padding(24)
         }
+        .scrollWheelKeepAlive()
         .background(InsurancePalette.background.ignoresSafeArea())
         .onAppear {
             selectedMemberID = selectedMemberID ?? workspace.members.first?.id
@@ -292,6 +294,7 @@ struct GapAnalysisView: View {
             }
             .padding(24)
         }
+        .scrollWheelKeepAlive()
         .background(InsurancePalette.background.ignoresSafeArea())
     }
 }
@@ -314,6 +317,7 @@ struct RecommendationsView: View {
             }
             .padding(24)
         }
+        .scrollWheelKeepAlive()
         .background(InsurancePalette.background.ignoresSafeArea())
         .onAppear {
             selectedRecommendationID = selectedRecommendationID ?? workspace.recommendations.first?.id
@@ -428,6 +432,7 @@ struct ProductComparisonView: View {
             }
             .padding(24)
         }
+        .scrollWheelKeepAlive()
         .background(InsurancePalette.background.ignoresSafeArea())
     }
 }

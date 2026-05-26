@@ -75,6 +75,7 @@ struct LogDetailView: View {
             }
             .padding()
         }
+        .scrollWheelKeepAlive()
         .textSelection(.enabled)
         .onAppear {
             if isModal {

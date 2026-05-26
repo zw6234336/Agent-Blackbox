@@ -15,6 +15,233 @@ enum InspectorTab: String, CaseIterable, Identifiable {
     case sandbox = "沙盒测试"
     var id: String { rawValue }
 }
+@MainActor
+final class ProxyDashboardViewModel: ObservableObject {
+    @Published var filteredRequests: [ProxyRequestLog] = []
+    @Published var selectedRequestId: UUID? = nil
+    @Published var tokenFlowPoints: [TokenFlowPoint] = []
+    @Published var currentRate: Int = 0
+    @Published var peakRate: Int = 0
+    @Published var isChartFrozen = false
+    @Published var searchText = ""
+    @Published var selectedClientFilter = "All"
+    @Published private(set) var activePendingCount = 0
+    @Published private(set) var hasPendingRequests = false
+    @Published private(set) var runawayClient: String? = nil
+
+    private let clients = ["pi", "cline", "claude-code", "cursor", "copilot", "other"]
+    private let knownChartClients = Set(["pi", "cline", "claude-code", "cursor", "copilot"])
+    private var allRequests: [ProxyRequestLog] = []
+    private var lastProcessedTime = Date()
+    private var lastSearchText = ""
+    private var lastSelectedClientFilter = "All"
+    private var lastRequestSignature = ""
+
+    var selectedRequest: ProxyRequestLog? {
+        guard let selectedRequestId else { return nil }
+        return allRequests.first { $0.id == selectedRequestId }
+    }
+
+    var isEmptyBecauseNoRequests: Bool {
+        allRequests.isEmpty
+    }
+
+    func refresh(with requests: [ProxyRequestLog]) {
+        allRequests = requests
+        activePendingCount = requests.reduce(0) { $0 + ($1.isPending ? 1 : 0) }
+        hasPendingRequests = activePendingCount > 0
+        runawayClient = computeRunawayClient(from: requests)
+
+        if let selectedRequestId, !requests.contains(where: { $0.id == selectedRequestId }) {
+            self.selectedRequestId = nil
+        }
+
+        updateFilteredRequestsIfNeeded(force: false)
+
+        if requests.isEmpty {
+            resetChart()
+            initializeChartData(from: requests)
+        }
+    }
+
+    func updateSearchText(_ value: String) {
+        searchText = value
+        updateFilteredRequestsIfNeeded(force: true)
+    }
+
+    func updateSelectedClientFilter(_ value: String) {
+        selectedClientFilter = value
+        updateFilteredRequestsIfNeeded(force: true)
+    }
+
+    func select(_ request: ProxyRequestLog) {
+        selectedRequestId = request.id
+    }
+
+    func clearSelection() {
+        selectedRequestId = nil
+    }
+
+    func priorRequest(before request: ProxyRequestLog) -> ProxyRequestLog? {
+        allRequests.first {
+            $0.client == request.client && $0.timestamp < request.timestamp
+        }
+    }
+
+    func startChartLoop() async {
+        initializeChartData(from: allRequests)
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(3))
+            appendNewChartPoint(from: allRequests)
+        }
+    }
+
+    func formatRelativeTime(_ date: Date) -> String {
+        let diff = lastProcessedTime.timeIntervalSince(date)
+        if diff < 6 { return "当前" }
+        let mins = Int(diff / 60)
+        if mins > 0 {
+            return "-\(mins)分"
+        } else {
+            let secs = Int(diff)
+            return "-\(secs)秒"
+        }
+    }
+
+    private func updateFilteredRequestsIfNeeded(force: Bool) {
+        let requestSignature = allRequests.map { request in
+            "\(request.hashValue)"
+        }.joined(separator: "|")
+
+        guard force ||
+                requestSignature != lastRequestSignature ||
+                searchText != lastSearchText ||
+                selectedClientFilter != lastSelectedClientFilter else {
+            return
+        }
+
+        let normalizedSearch = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let normalizedClient = selectedClientFilter.lowercased()
+
+        filteredRequests = allRequests.filter { req in
+            let matchesSearch = normalizedSearch.isEmpty ||
+                (req.model ?? "").lowercased().contains(normalizedSearch) ||
+                (req.prompt ?? "").lowercased().contains(normalizedSearch) ||
+                (req.response ?? "").lowercased().contains(normalizedSearch) ||
+                req.path.lowercased().contains(normalizedSearch)
+
+            let matchesClient = selectedClientFilter == "All" ||
+                req.client.lowercased() == normalizedClient
+
+            return matchesSearch && matchesClient
+        }
+
+        lastRequestSignature = requestSignature
+        lastSearchText = searchText
+        lastSelectedClientFilter = selectedClientFilter
+    }
+
+    private func resetChart() {
+        tokenFlowPoints.removeAll()
+        currentRate = 0
+        peakRate = 0
+        lastProcessedTime = Date()
+        isChartFrozen = false
+    }
+
+    private func initializeChartData(from requests: [ProxyRequestLog]) {
+        let now = Date()
+        let binSize: TimeInterval = 3.0
+        let binCount = 100
+        var points: [TokenFlowPoint] = []
+
+        for i in (0..<binCount).reversed() {
+            let startTime = now.addingTimeInterval(-Double(i) * binSize)
+            let endTime = startTime.addingTimeInterval(binSize)
+
+            for client in clients {
+                let tokensInBin = tokens(in: requests, client: client, from: startTime, to: endTime)
+                points.append(TokenFlowPoint(time: startTime, tokenCount: tokensInBin, client: client))
+            }
+        }
+
+        tokenFlowPoints = points
+        lastProcessedTime = now
+
+        let lastBinTime = points.last?.time
+        currentRate = points.filter { $0.time == lastBinTime }.map(\.tokenCount).reduce(0, +)
+
+        peakRate = Dictionary(grouping: points, by: { $0.time })
+            .values
+            .map { $0.map(\.tokenCount).reduce(0, +) }
+            .max() ?? 0
+    }
+
+    private func appendNewChartPoint(from requests: [ProxyRequestLog]) {
+        let currentTime = Date()
+        let lastReqTime = requests.first?.timestamp ?? Date.distantPast
+        let timeSinceLastReq = currentTime.timeIntervalSince(lastReqTime)
+
+        if timeSinceLastReq > 30.0 && !requests.isEmpty {
+            isChartFrozen = true
+            return
+        }
+
+        isChartFrozen = false
+        var newPoints: [TokenFlowPoint] = []
+
+        for client in clients {
+            let tokensInBin = tokens(in: requests, client: client, from: lastProcessedTime, to: currentTime)
+            newPoints.append(TokenFlowPoint(time: currentTime, tokenCount: tokensInBin, client: client))
+        }
+
+        tokenFlowPoints.append(contentsOf: newPoints)
+
+        let maxPoints = 100 * clients.count
+        if tokenFlowPoints.count > maxPoints {
+            tokenFlowPoints.removeFirst(min(clients.count, tokenFlowPoints.count - maxPoints))
+        }
+
+        let totalInBin = newPoints.map(\.tokenCount).reduce(0, +)
+        lastProcessedTime = currentTime
+        currentRate = totalInBin
+        peakRate = max(peakRate, totalInBin)
+    }
+
+    private func tokens(in requests: [ProxyRequestLog], client: String, from startTime: Date, to endTime: Date) -> Int {
+        requests.reduce(0) { sum, req in
+            guard !req.isPending,
+                  req.timestamp >= startTime,
+                  req.timestamp < endTime,
+                  matchesChartClient(req.client, chartClient: client) else {
+                return sum
+            }
+            return sum + (req.promptTokens ?? 0) + (req.completionTokens ?? 0)
+        }
+    }
+
+    private func matchesChartClient(_ requestClient: String, chartClient: String) -> Bool {
+        let normalizedClient = requestClient.lowercased()
+        if chartClient == "other" {
+            return !knownChartClients.contains(normalizedClient)
+        }
+        return normalizedClient == chartClient
+    }
+
+    private func computeRunawayClient(from requests: [ProxyRequestLog]) -> String? {
+        let cutoff = Date().addingTimeInterval(-15)
+        var counts: [String: Int] = [:]
+
+        for request in requests where request.timestamp >= cutoff {
+            counts[request.client, default: 0] += 1
+            if counts[request.client, default: 0] >= 5 {
+                return request.client
+            }
+        }
+
+        return nil
+    }
+}
 
 struct ProxyDashboardView: View {
     @EnvironmentObject var proxyServer: ProxyServerService
@@ -23,40 +250,14 @@ struct ProxyDashboardView: View {
     @EnvironmentObject var database: DatabaseService
     @EnvironmentObject var desktopWidget: DesktopWidgetService
     
-    @State private var selectedRequest: ProxyRequestLog? = nil
+    @StateObject private var viewModel = ProxyDashboardViewModel()
     @State private var isCopying = false
-    @State private var tokenFlowPoints: [TokenFlowPoint] = []
-    @State private var currentRate: Int = 0
-    @State private var peakRate: Int = 0
-    @State private var lastProcessedTime: Date = Date()
-    @State private var todayTokens: Int = 0
-    
-    // New UI State Properties
-    @State private var isChartFrozen = false
     @State private var isShowingGuide = false
-    @State private var searchText = ""
-    @State private var selectedClientFilter: String = "All"
     @State private var inspectorTab: InspectorTab = .payload
-    @State private var isGitExpanded = false
     
     // Sandbox State
     @State private var replayingRequest = false
     @State private var replayResult: String? = nil
-    
-    var filteredRequests: [ProxyRequestLog] {
-        proxyServer.liveRequests.filter { req in
-            let matchesSearch = searchText.isEmpty || 
-                (req.model ?? "").lowercased().contains(searchText.lowercased()) ||
-                (req.prompt ?? "").lowercased().contains(searchText.lowercased()) ||
-                (req.response ?? "").lowercased().contains(searchText.lowercased()) ||
-                req.path.lowercased().contains(searchText.lowercased())
-            
-            let matchesClient = selectedClientFilter == "All" || 
-                req.client.lowercased() == selectedClientFilter.lowercased()
-            
-            return matchesSearch && matchesClient
-        }
-    }
     
     var body: some View {
         HStack(spacing: 16) {
@@ -65,7 +266,7 @@ struct ProxyDashboardView: View {
                 headerSection
                 
                 // Network Wave pulse
-                PulseWaveView(isActive: proxyServer.liveRequests.contains(where: \.isPending))
+                PulseWaveView(isActive: viewModel.hasPendingRequests)
                     .frame(height: 24)
                     .background(Color.primary.opacity(0.02))
                     .cornerRadius(6)
@@ -79,7 +280,7 @@ struct ProxyDashboardView: View {
             .frame(maxWidth: .infinity)
             
             // Right Column: Details Inspector
-            if let request = selectedRequest {
+            if let request = viewModel.selectedRequest {
                 detailInspectorPanel(for: request)
                     .frame(width: 420)
                     .transition(.move(edge: .trailing).combined(with: .opacity))
@@ -87,23 +288,13 @@ struct ProxyDashboardView: View {
         }
         .padding(16)
         .background(Color.dashboardBackground)
-        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: selectedRequest)
+        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: viewModel.selectedRequestId)
         .task {
-            initializeChartData()
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(3))
-                appendNewChartPoint()
-            }
+            viewModel.refresh(with: proxyServer.liveRequests)
+            await viewModel.startChartLoop()
         }
         .onChange(of: proxyServer.liveRequests) { oldValue, newValue in
-            if newValue.isEmpty {
-                tokenFlowPoints.removeAll()
-                currentRate = 0
-                peakRate = 0
-                todayTokens = 0
-                lastProcessedTime = Date()
-                initializeChartData()
-            }
+            viewModel.refresh(with: newValue)
         }
     }
     
@@ -241,12 +432,12 @@ struct ProxyDashboardView: View {
                     Text("实时网关吞吐")
                         .font(.headline)
                     
-                    Text(isChartFrozen ? "⏸ 视图静止 (保留上次活动波动)" : "🔴 实时监控中")
+                    Text(viewModel.isChartFrozen ? "⏸ 视图静止 (保留上次活动波动)" : "🔴 实时监控中")
                         .font(.system(size: 9, weight: .bold))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 1.5)
-                        .background(isChartFrozen ? Color.orange.opacity(0.12) : Color.red.opacity(0.12))
-                        .foregroundStyle(isChartFrozen ? Color.orange : Color.red)
+                        .background(viewModel.isChartFrozen ? Color.orange.opacity(0.12) : Color.red.opacity(0.12))
+                        .foregroundStyle(viewModel.isChartFrozen ? Color.orange : Color.red)
                         .cornerRadius(4)
                 }
                 Text("数据平滑缓冲刷新。如果 30 秒无请求，图表将自动暂停滚动以保留历史轨迹。")
@@ -262,16 +453,16 @@ struct ProxyDashboardView: View {
                     Text("当前速率")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
-                    Text(currentRate.formattedCompact + " T/3s")
+                    Text(viewModel.currentRate.formattedCompact + " T/3s")
                         .font(.system(size: 14, weight: .bold, design: .rounded))
-                        .foregroundStyle(currentRate > 0 ? Color.blue : Color.secondary)
+                        .foregroundStyle(viewModel.currentRate > 0 ? Color.blue : Color.secondary)
                 }
                 
                 VStack(alignment: .trailing, spacing: 2) {
                     Text("历史峰值")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
-                    Text(peakRate.formattedCompact + " T/3s")
+                    Text(viewModel.peakRate.formattedCompact + " T/3s")
                         .font(.system(size: 14, weight: .bold, design: .rounded))
                         .foregroundStyle(Color.purple)
                 }
@@ -282,7 +473,7 @@ struct ProxyDashboardView: View {
     
     private var chartView: some View {
         Group {
-            if tokenFlowPoints.isEmpty {
+            if viewModel.tokenFlowPoints.isEmpty {
                 VStack {
                     ProgressView()
                         .controlSize(.small)
@@ -295,7 +486,7 @@ struct ProxyDashboardView: View {
                 .cornerRadius(10)
             } else {
                 let valueKey = "Tokens"
-                Chart(tokenFlowPoints) { point in
+                Chart(viewModel.tokenFlowPoints) { point in
                     let value = Double(point.tokenCount)
                     
                     AreaMark(
@@ -335,7 +526,7 @@ struct ProxyDashboardView: View {
                         AxisTick()
                         AxisValueLabel {
                             if let dateValue = val.as(Date.self) {
-                                Text(formatRelativeTime(dateValue))
+                                Text(viewModel.formatRelativeTime(dateValue))
                                     .font(.system(size: 8))
                             }
                         }
@@ -354,123 +545,7 @@ struct ProxyDashboardView: View {
         }
     }
     
-    @MainActor
-    private func updateTodayUsage() {
-        Task {
-            let calendar = Calendar.current
-            let startOfDay = calendar.startOfDay(for: Date())
-            let resolvedUsage = await database.aggregateUsage(provider: nil, since: startOfDay)
-            self.todayTokens = resolvedUsage.totalTokens
-        }
-    }
-    
-    @MainActor
-    private func initializeChartData() {
-        let now = Date()
-        let binSize: TimeInterval = 3.0
-        let binCount = 100 // 5 minutes of history
-        var points: [TokenFlowPoint] = []
-        let clients = ["pi", "cline", "claude-code", "cursor", "copilot", "other"]
-        
-        for i in (0..<binCount).reversed() {
-            let startTime = now.addingTimeInterval(-Double(i) * binSize)
-            let endTime = startTime.addingTimeInterval(binSize)
-            
-            for client in clients {
-                let binRequests = proxyServer.liveRequests.filter { req in
-                    guard !req.isPending else { return false }
-                    let reqClient = req.client.lowercased()
-                    let match: Bool
-                    if client == "other" {
-                        match = !["pi", "cline", "claude-code", "cursor", "copilot"].contains(reqClient)
-                    } else {
-                        match = reqClient == client
-                    }
-                    return match && req.timestamp >= startTime && req.timestamp < endTime
-                }
-                
-                let tokensInBin = binRequests.reduce(0) { sum, req in
-                    sum + (req.promptTokens ?? 0) + (req.completionTokens ?? 0)
-                }
-                
-                points.append(TokenFlowPoint(time: startTime, tokenCount: tokensInBin, client: client))
-            }
-        }
-        
-        self.tokenFlowPoints = points
-        self.lastProcessedTime = now
-        
-        let lastBinTime = points.last?.time
-        let lastBinTotal = points.filter { $0.time == lastBinTime }.map(\.tokenCount).reduce(0, +)
-        self.currentRate = lastBinTotal
-        
-        var maxTotal = 0
-        let groupedByTime = Dictionary(grouping: points, by: { $0.time })
-        for (_, pts) in groupedByTime {
-            let total = pts.map(\.tokenCount).reduce(0, +)
-            if total > maxTotal {
-                maxTotal = total
-            }
-        }
-        self.peakRate = maxTotal
-        
-        updateTodayUsage()
-    }
-    
-    @MainActor
-    private func appendNewChartPoint() {
-        let currentTime = Date()
-        
-        // Session-based Chart Freezing: Check if there has been no new request in the last 30 seconds
-        let lastReqTime = proxyServer.liveRequests.first?.timestamp ?? Date.distantPast
-        let timeSinceLastReq = currentTime.timeIntervalSince(lastReqTime)
-        
-        if timeSinceLastReq > 30.0 && !proxyServer.liveRequests.isEmpty {
-            self.isChartFrozen = true
-            updateTodayUsage()
-            return
-        }
-        
-        self.isChartFrozen = false
-        let clients = ["pi", "cline", "claude-code", "cursor", "copilot", "other"]
-        var newPoints: [TokenFlowPoint] = []
-        
-        for client in clients {
-            let binRequests = proxyServer.liveRequests.filter { req in
-                guard !req.isPending else { return false }
-                let reqClient = req.client.lowercased()
-                let match: Bool
-                if client == "other" {
-                    match = !["pi", "cline", "claude-code", "cursor", "copilot"].contains(reqClient)
-                } else {
-                    match = reqClient == client
-                }
-                return match && req.timestamp >= lastProcessedTime && req.timestamp < currentTime
-            }
-            
-            let tokensInBin = binRequests.reduce(0) { sum, req in
-                sum + (req.promptTokens ?? 0) + (req.completionTokens ?? 0)
-            }
-            
-            newPoints.append(TokenFlowPoint(time: currentTime, tokenCount: tokensInBin, client: client))
-        }
-        
-        tokenFlowPoints.append(contentsOf: newPoints)
-        
-        let maxPoints = 100 * clients.count
-        if tokenFlowPoints.count > maxPoints {
-            tokenFlowPoints.removeFirst(clients.count)
-        }
-        
-        let totalInBin = newPoints.map(\.tokenCount).reduce(0, +)
-        self.lastProcessedTime = currentTime
-        self.currentRate = totalInBin
-        self.peakRate = max(peakRate, totalInBin)
-        
-        updateTodayUsage()
-    }
-    
-    // MARK: - Metrics & Interception
+
     
     private var metricsAndInterceptionRow: some View {
         HStack(spacing: 16) {
@@ -479,36 +554,13 @@ struct ProxyDashboardView: View {
                 .frame(maxWidth: .infinity)
             
             // Interception Config Toggles (Right)
-            VStack(alignment: .leading, spacing: 8) {
-                Text("快捷接管控制")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(.primary)
-                
-                Text("开启后自动修改对应插件的接口配置")
-                    .font(.system(size: 9))
-                    .foregroundStyle(.secondary)
-                
-                ScrollView {
-                    VStack(spacing: 6) {
-                        interceptionToggle(for: .vscodeCline, binding: $configService.config.enableVSCodeClineInterception)
-                        interceptionToggle(for: .vscodeRooCline, binding: $configService.config.enableVSCodeRooClineInterception)
-                        interceptionToggle(for: .cursorCline, binding: $configService.config.enableCursorClineInterception)
-                        interceptionToggle(for: .cursorRooCline, binding: $configService.config.enableCursorRooClineInterception)
-                        interceptionToggle(for: .claudeCode, binding: $configService.config.enableClaudeCodeInterception)
-                        interceptionToggle(for: .pi, binding: $configService.config.enablePiInterception)
-                    }
-                }
-            }
-            .padding(12)
-            .frame(width: 260, height: 160)
-            .background(RoundedRectangle(cornerRadius: 12).fill(.ultraThinMaterial))
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.primary.opacity(0.08), lineWidth: 1))
+            QuickInterceptionControlView()
         }
     }
     
     private var gatewayStatusCard: some View {
-        let runaway = runawayClient
-        let activeCount = proxyServer.liveRequests.filter(\.isPending).count
+        let runaway = viewModel.runawayClient
+        let activeCount = viewModel.activePendingCount
         
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
@@ -567,7 +619,7 @@ struct ProxyDashboardView: View {
                     Text("⚡ AI 并发传输中")
                         .font(.system(size: 14, weight: .bold))
                         .foregroundStyle(.blue)
-                    Text("网关当前正在流式传输 \(activeCount) 个并发连接，实时拦截和解析流量。")
+                    Text("网关当前正在流式传输 \(activeCount) 个并发连接，实时拦截并解析流量。")
                         .font(.system(size: 9))
                         .foregroundStyle(.secondary)
                         .lineLimit(3)
@@ -587,43 +639,6 @@ struct ProxyDashboardView: View {
         .frame(maxWidth: .infinity, maxHeight: 160)
         .background(RoundedRectangle(cornerRadius: 12).fill(.ultraThinMaterial))
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.primary.opacity(0.08), lineWidth: 1))
-    }
-    
-    private func interceptionToggle(for client: InterceptClient, binding: Binding<Bool>) -> some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 1) {
-                Text(client.displayName)
-                    .font(.system(size: 11, weight: .medium))
-                
-                if let error = clientInterception.errors[client] {
-                    Text("配置异常")
-                        .font(.system(size: 8))
-                        .foregroundStyle(.red)
-                        .help(error)
-                } else if clientInterception.activeStates[client] == true {
-                    Text("接管运行中")
-                        .font(.system(size: 8))
-                        .foregroundStyle(.green)
-                } else {
-                    let exists = FileManager.default.fileExists(atPath: client.settingsURL.path)
-                    Text(exists ? "已检测就绪" : "未安装插件")
-                        .font(.system(size: 8))
-                        .foregroundStyle(.secondary)
-                }
-            }
-            
-            Spacer()
-            
-            Toggle("", isOn: binding)
-                .toggleStyle(.switch)
-                .scaleEffect(0.7)
-                .frame(width: 40)
-                .disabled(!FileManager.default.fileExists(atPath: client.settingsURL.path))
-        }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 4)
-        .background(Color.primary.opacity(0.02))
-        .cornerRadius(6)
     }
     
     private func disableInterception(for clientName: String) {
@@ -660,7 +675,10 @@ struct ProxyDashboardView: View {
                     Image(systemName: "magnifyingglass")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    TextField("搜索模型、路径、日志内容...", text: $searchText)
+                    TextField("搜索模型、路径、日志内容...", text: Binding(
+                            get: { viewModel.searchText },
+                            set: { viewModel.updateSearchText($0) }
+                        ))
                         .textFieldStyle(.plain)
                         .font(.caption)
                 }
@@ -672,7 +690,7 @@ struct ProxyDashboardView: View {
                 
                 Button("清空流水") {
                     proxyServer.clearLiveRequests()
-                    selectedRequest = nil
+                    viewModel.clearSelection()
                 }
                 .font(.caption)
                 .buttonStyle(.borderless)
@@ -688,13 +706,13 @@ struct ProxyDashboardView: View {
                 filterChip(label: "Copilot", val: "copilot")
             }
             
-            if filteredRequests.isEmpty {
+            if viewModel.filteredRequests.isEmpty {
                 VStack(spacing: 8) {
                     Spacer()
                     Image(systemName: "network")
                         .font(.largeTitle)
                         .foregroundStyle(.tertiary)
-                    Text(proxyServer.liveRequests.isEmpty ? "暂无代理调用流水" : "无匹配筛选条件的流水")
+                    Text(viewModel.isEmptyBecauseNoRequests ? "暂无代理调用流水" : "无匹配筛选条件的流水")
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                     Text("请在 AI 客户端中将 Base URL 配置为本机网关后进行对话。")
@@ -705,10 +723,10 @@ struct ProxyDashboardView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .cardStyle()
             } else {
-                List(selection: $selectedRequest) {
-                    ForEach(filteredRequests) { request in
+                List(selection: $viewModel.selectedRequestId) {
+                    ForEach(viewModel.filteredRequests) { request in
                         liveRequestRow(for: request)
-                            .tag(request)
+                            .tag(request.id)
                             .listRowSeparator(.hidden)
                             .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
                     }
@@ -721,20 +739,20 @@ struct ProxyDashboardView: View {
     }
     
     private func filterChip(label: String, val: String) -> some View {
-        Button(action: { selectedClientFilter = val }) {
+        Button(action: { viewModel.updateSelectedClientFilter(val) }) {
             Text(label)
-                .font(.system(size: 9, weight: selectedClientFilter == val ? .bold : .regular))
+                .font(.system(size: 9, weight: viewModel.selectedClientFilter == val ? .bold : .regular))
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
-                .background(selectedClientFilter == val ? Color.blue.opacity(0.12) : Color.primary.opacity(0.04))
-                .foregroundStyle(selectedClientFilter == val ? Color.blue : .secondary)
+                .background(viewModel.selectedClientFilter == val ? Color.blue.opacity(0.12) : Color.primary.opacity(0.04))
+                .foregroundStyle(viewModel.selectedClientFilter == val ? Color.blue : .secondary)
                 .cornerRadius(4)
         }
         .buttonStyle(.plain)
     }
     
     private func liveRequestRow(for request: ProxyRequestLog) -> some View {
-        let isSelected = selectedRequest?.id == request.id
+        let isSelected = viewModel.selectedRequestId == request.id
         let provider = detectProvider(model: request.model ?? "", path: request.path)
         let clColor = clientColor(request.client)
         
@@ -881,7 +899,7 @@ struct ProxyDashboardView: View {
         .contentShape(Rectangle())
         .onTapGesture {
             withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
-                selectedRequest = request
+                viewModel.select(request)
                 self.replayResult = nil
                 self.replayingRequest = false
             }
@@ -898,7 +916,7 @@ struct ProxyDashboardView: View {
                     .font(.system(size: 14, weight: .bold))
                 Spacer()
                 Button(action: {
-                    withAnimation { selectedRequest = nil }
+                    withAnimation { viewModel.clearSelection() }
                 }) {
                     Image(systemName: "xmark.circle.fill")
                         .font(.title3)
@@ -1022,6 +1040,7 @@ struct ProxyDashboardView: View {
                 }
             }
         }
+        .scrollWheelKeepAlive()
     }
     
     private func loopAnalysisView(for request: ProxyRequestLog) -> some View {
@@ -1029,12 +1048,7 @@ struct ProxyDashboardView: View {
             Text("死循环检测与相似度比对")
                 .font(.system(size: 12, weight: .bold))
             
-            // Find prior request from same client
-            let priorRequests = proxyServer.liveRequests.filter { 
-                $0.client == request.client && $0.timestamp < request.timestamp 
-            }
-            
-            if let prior = priorRequests.first {
+            if let prior = viewModel.priorRequest(before: request) {
                 let similarity = computeSimilarity(request.prompt ?? "", prior.prompt ?? "")
                 
                 VStack(alignment: .leading, spacing: 8) {
@@ -1134,6 +1148,7 @@ struct ProxyDashboardView: View {
                         .cornerRadius(6)
                         .textSelection(.enabled)
                 }
+                .scrollWheelKeepAlive()
             } else {
                 VStack {
                     Spacer()
@@ -1172,21 +1187,23 @@ struct ProxyDashboardView: View {
         pasteboard.setString(text, forType: .string)
     }
     
-    private func formatRelativeTime(_ date: Date) -> String {
-        let diff = lastProcessedTime.timeIntervalSince(date)
-        if diff < 6 { return "当前" }
-        let mins = Int(diff / 60)
-        if mins > 0 {
-            return "-\(mins)分"
-        } else {
-            let secs = Int(diff)
-            return "-\(secs)秒"
-        }
-    }
     
     private func detectProvider(model: String, path: String) -> LLMProvider {
         let isAnthropic = path.contains("messages")
         let modelLower = model.lowercased()
+        
+        let isLocalModel = modelLower.contains("gguf") ||
+                           modelLower.contains("mlx") ||
+                           modelLower.contains("local") ||
+                           (modelLower.contains("/") && !modelLower.hasPrefix("ft:"))
+        
+        if isLocalModel {
+            if modelLower.contains("ollama") {
+                return .ollama
+            } else {
+                return .lmstudio
+            }
+        }
         
         if isAnthropic || modelLower.contains("claude") || modelLower.contains("anthropic") {
             return .anthropic
@@ -1209,19 +1226,6 @@ struct ProxyDashboardView: View {
         }
     }
     
-    private var runawayClient: String? {
-        let now = Date()
-        let recentRequests = proxyServer.liveRequests.filter { $0.timestamp >= now.addingTimeInterval(-15) }
-        
-        // Group by client
-        let groups = Dictionary(grouping: recentRequests, by: { $0.client })
-        for (client, reqs) in groups {
-            if reqs.count >= 5 {
-                return client
-            }
-        }
-        return nil
-    }
     
     private func clientDisplayName(_ client: String) -> String {
         switch client.lowercased() {
@@ -1315,39 +1319,57 @@ struct ProxyDashboardView: View {
 // MARK: - Canvas-based Pulse Wave
 struct PulseWaveView: View {
     let isActive: Bool
-    
+    @Environment(\.scenePhase) private var scenePhase
+
     var body: some View {
-        TimelineView(.animation) { timeline in
-            Canvas { context, size in
-                let width = size.width
-                let height = size.height
-                let midY = height / 2.0
-                
-                var path = Path()
-                path.move(to: CGPoint(x: 0, y: midY))
-                
-                let time = timeline.date.timeIntervalSinceReferenceDate
-                let freq: CGFloat = isActive ? 0.06 : 0.015
-                let amp: CGFloat = isActive ? 8.0 : 1.2
-                let speed: CGFloat = isActive ? 10.0 : 1.5
-                
-                for x in stride(from: 0, to: width, by: 2) {
-                    let relativeX = x / width
-                    let fade = sin(relativeX * .pi) // Fade out at boundaries
-                    let y = midY + sin(x * freq - CGFloat(time) * speed) * amp * fade
-                    path.addLine(to: CGPoint(x: x, y: y))
-                }
-                
-                context.stroke(
-                    path,
-                    with: .linearGradient(
-                        Gradient(colors: isActive ? [.blue, .purple, .pink] : [.secondary.opacity(0.3), .secondary.opacity(0.1)]),
-                        startPoint: CGPoint(x: 0, y: midY),
-                        endPoint: CGPoint(x: width, y: midY)
-                    ),
-                    style: StrokeStyle(lineWidth: isActive ? 1.5 : 0.8, lineCap: .round)
-                )
+        // IMPORTANT: Do NOT use `TimelineView(.animation)` here.
+        // A display-rate timeline that stays mounted for hours interacts
+        // badly with SwiftUI's macOS scroll-event routing, and after
+        // long idle periods can cause trackpad/scroll-wheel events to
+        // stop being delivered to ScrollViews app-wide (the scrollbar
+        // thumb still works because that path bypasses SwiftUI).
+        // A throttled periodic schedule looks identical to the eye while
+        // keeping the main run loop responsive.
+        if isActive && scenePhase == .active {
+            TimelineView(.periodic(from: Date(), by: 1.0 / 24.0)) { timeline in
+                waveCanvas(date: timeline.date)
             }
+        } else {
+            // Static frame when idle / backgrounded: zero invalidations.
+            waveCanvas(date: Date(timeIntervalSinceReferenceDate: 0))
+        }
+    }
+    
+    private func waveCanvas(date: Date) -> some View {
+        Canvas { context, size in
+            let width = size.width
+            let height = size.height
+            let midY = height / 2.0
+            
+            var path = Path()
+            path.move(to: CGPoint(x: 0, y: midY))
+            
+            let time = date.timeIntervalSinceReferenceDate
+            let freq: CGFloat = isActive ? 0.06 : 0.015
+            let amp: CGFloat = isActive ? 8.0 : 1.2
+            let speed: CGFloat = isActive ? 10.0 : 1.5
+            
+            for x in stride(from: 0, to: width, by: 2) {
+                let relativeX = x / width
+                let fade = sin(relativeX * .pi) // Fade out at boundaries
+                let y = midY + sin(x * freq - CGFloat(time) * speed) * amp * fade
+                path.addLine(to: CGPoint(x: x, y: y))
+            }
+            
+            context.stroke(
+                path,
+                with: .linearGradient(
+                    Gradient(colors: isActive ? [.blue, .purple, .pink] : [.secondary.opacity(0.3), .secondary.opacity(0.1)]),
+                    startPoint: CGPoint(x: 0, y: midY),
+                    endPoint: CGPoint(x: width, y: midY)
+                ),
+                style: StrokeStyle(lineWidth: isActive ? 1.5 : 0.8, lineCap: .round)
+            )
         }
     }
 }
@@ -1477,8 +1499,90 @@ struct SimpleDiffView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .scrollWheelKeepAlive()
         .padding(8)
         .background(Color.primary.opacity(0.03))
+        .cornerRadius(6)
+    }
+}
+
+// MARK: - Quick Interception Control View
+
+struct QuickInterceptionControlView: View {
+    @EnvironmentObject var configService: ConfigService
+    @EnvironmentObject var clientInterception: ClientInterceptionService
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("快捷接管控制")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(.primary)
+            
+            Text("开启后自动修改对应插件的接口配置")
+                .font(.system(size: 8))
+                .foregroundStyle(.secondary)
+            
+            VStack(spacing: 5) {
+                HStack(spacing: 6) {
+                    interceptionToggle(for: .vscodeCline, binding: $configService.config.enableVSCodeClineInterception)
+                    interceptionToggle(for: .vscodeRooCline, binding: $configService.config.enableVSCodeRooClineInterception)
+                }
+                HStack(spacing: 6) {
+                    interceptionToggle(for: .cursorCline, binding: $configService.config.enableCursorClineInterception)
+                    interceptionToggle(for: .cursorRooCline, binding: $configService.config.enableCursorRooClineInterception)
+                }
+                HStack(spacing: 6) {
+                    interceptionToggle(for: .claudeCode, binding: $configService.config.enableClaudeCodeInterception)
+                    interceptionToggle(for: .pi, binding: $configService.config.enablePiInterception)
+                }
+            }
+        }
+        .padding(10)
+        .frame(width: 360, height: 160)
+        .background(RoundedRectangle(cornerRadius: 12).fill(.ultraThinMaterial))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.primary.opacity(0.08), lineWidth: 1))
+        .onAppear {
+            clientInterception.syncWithConfig()
+        }
+    }
+    
+    private func interceptionToggle(for client: InterceptClient, binding: Binding<Bool>) -> some View {
+        let exists = clientInterception.existsStates[client] ?? false
+        
+        return HStack(spacing: 4) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(client.displayName)
+                    .font(.system(size: 9.5, weight: .medium))
+                    .lineLimit(1)
+                
+                if let error = clientInterception.errors[client] {
+                    Text("配置异常")
+                        .font(.system(size: 7.5))
+                        .foregroundStyle(.red)
+                        .help(error)
+                } else if clientInterception.activeStates[client] == true {
+                    Text("接管运行中")
+                        .font(.system(size: 7.5))
+                        .foregroundStyle(.green)
+                } else {
+                    Text(exists ? "已检测就绪" : "未安装插件")
+                        .font(.system(size: 7.5))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            
+            Spacer(minLength: 4)
+            
+            Toggle("", isOn: binding)
+                .toggleStyle(.switch)
+                .scaleEffect(0.65)
+                .frame(width: 30, height: 16)
+                .disabled(!exists)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
+        .frame(maxWidth: .infinity)
+        .background(Color.primary.opacity(0.02))
         .cornerRadius(6)
     }
 }

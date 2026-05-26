@@ -59,6 +59,7 @@ struct DashboardView: View {
             }
             .padding(20)
         }
+        .scrollWheelKeepAlive()
         .background(Color.dashboardBackground)
         .task {
             database.refreshDashboardStats(days: daysForRange(timeRange))
@@ -240,7 +241,7 @@ struct DashboardView: View {
                 value: stats.localCallsCount.formattedCompact,
                 icon: "cpu",
                 color: .successGreen,
-                subtitle: "Ollama 本地转发次数"
+                subtitle: "本地模型 (Ollama/LM Studio) 调用"
             )
         }
     }
@@ -371,7 +372,13 @@ struct DashboardView: View {
         .disabled(log == nil)
     }
 
-    // MARK: - Token Trend Chart
+    private func deterministicHash(_ string: String) -> Int {
+        var hash = 5381
+        for byte in string.utf8 {
+            hash = ((hash << 5) &+ hash) &+ Int(byte)
+        }
+        return abs(hash)
+    }
 
     private func colorForModel(_ modelName: String) -> Color {
         let lower = modelName.lowercased()
@@ -385,12 +392,21 @@ struct DashboardView: View {
             return Color(red: 0.12, green: 0.45, blue: 0.9) // 科技蓝 (DeepSeek)
         } else if lower.contains("llama") || lower.contains("ollama") {
             return Color(red: 0.85, green: 0.65, blue: 0.1) // 金黄色 (Llama)
+        } else if lower.contains("qwen") || lower.contains("tongyi") {
+            return Color(red: 0.35, green: 0.25, blue: 0.85) // 智海蓝 (阿里通义千问)
+        } else if lower.contains("kimi") || lower.contains("moonshot") {
+            return Color(red: 0.9, green: 0.3, blue: 0.15) // 橙红色 (Moonshot Kimi)
+        } else if lower.contains("doubao") || lower.contains("bytedance") {
+            return Color(red: 0.0, green: 0.5, blue: 1.0) // 字节蓝色 (豆包)
+        } else if lower.contains("minimax") {
+            return Color(red: 0.8, green: 0.1, blue: 0.4) // 紫红色 (MiniMax)
         } else if lower == "other" || lower == "其它" || lower == "其他" {
             return Color.secondary
         } else {
-            let hash = abs(modelName.hashValue)
+            let hash = deterministicHash(modelName)
             let colors: [Color] = [
-                .teal, .indigo, .pink, .cyan, .mint, .orange, .purple
+                .teal, .indigo, .pink, .cyan, .mint, .orange, .purple,
+                .blue, .green, .red, .yellow
             ]
             return colors[hash % colors.count]
         }
@@ -812,7 +828,8 @@ struct DashboardView: View {
                                 rank: index + 1,
                                 item: item,
                                 maxCount: maxCount,
-                                totalCalls: totalCalls
+                                totalCalls: totalCalls,
+                                color: colorForModel(item.name)
                             )
                         }
                     }
@@ -1017,6 +1034,7 @@ struct ModelRankingRow: View {
     let item: ModelChartData
     let maxCount: Int
     let totalCalls: Int
+    let color: Color
 
     private var fillRatio: Double {
         guard maxCount > 0 else { return 0 }
@@ -1030,11 +1048,15 @@ struct ModelRankingRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
+            HStack(alignment: .center, spacing: 8) {
                 Text("#\(rank)")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
-                    .frame(width: 28, alignment: .leading)
+                    .frame(width: 24, alignment: .leading)
+
+                Circle()
+                    .fill(color)
+                    .frame(width: 8, height: 8)
 
                 Text(item.name)
                     .font(.subheadline)
@@ -1056,11 +1078,11 @@ struct ModelRankingRow: View {
                 let width = max(proxy.size.width * fillRatio, 8)
                 ZStack(alignment: .leading) {
                     RoundedRectangle(cornerRadius: 6)
-                        .fill(Color.primary.opacity(0.07))
+                        .fill(color.opacity(0.12))
                     RoundedRectangle(cornerRadius: 6)
                         .fill(
                             LinearGradient(
-                                colors: [.accentGradientStart, .accentGradientEnd],
+                                colors: [color, color.opacity(0.75)],
                                 startPoint: .leading,
                                 endPoint: .trailing
                             )
@@ -1073,7 +1095,11 @@ struct ModelRankingRow: View {
         .padding(10)
         .background(
             RoundedRectangle(cornerRadius: 10)
-                .fill(Color.primary.opacity(0.03))
+                .fill(color.opacity(0.04))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(color.opacity(0.08), lineWidth: 1)
         )
     }
 }

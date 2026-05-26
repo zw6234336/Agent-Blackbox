@@ -10,6 +10,7 @@ final class DatabaseService: ObservableObject {
     @Published var collections: [LogCollection] = []
     @Published var dashboardStats: DashboardStats = DashboardStats()
     private var lastDashboardDays: Int? = 0
+    private let dbQueue = DispatchQueue(label: "com.agent.blackbox.database", qos: .userInitiated)
 
     nonisolated(unsafe) private var db: Connection?
 
@@ -52,63 +53,70 @@ final class DatabaseService: ObservableObject {
     func initializeIfNeeded() {
         guard db == nil else { return }
 
-        do {
-            let dbURL = Self.defaultDatabaseURL
-            try FileManager.default.createDirectory(at: dbURL.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: nil)
-            db = try Connection(dbURL.path)
-            
-            // Enable WAL mode for high-concurrency writes
-            try db?.execute("PRAGMA journal_mode = WAL;")
+        dbQueue.sync {
+            guard db == nil else { return }
+            do {
+                let dbURL = Self.defaultDatabaseURL
+                try FileManager.default.createDirectory(at: dbURL.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: nil)
+                let conn = try Connection(dbURL.path)
+                conn.busyTimeout = 5.0
+                db = conn
+                
+                // Enable WAL mode for high-concurrency writes
+                try db?.execute("PRAGMA journal_mode = WAL;")
 
-            // Create logs table with all fields
-            try db?.run(logsTable.create(ifNotExists: true) { t in
-                t.column(id, primaryKey: true)
-                t.column(timestamp)
-                t.column(sourceFile)
-                t.column(providerRaw)
-                t.column(modelName)
-                t.column(prompt)
-                t.column(response)
-                t.column(promptTokens)
-                t.column(completionTokens)
-                t.column(totalTokens)
-                t.column(estimatedCost)
-                t.column(duration)
-                t.column(statusCode)
-                t.column(errorMessage)
-                t.column(isBookmarked, defaultValue: false)
-                t.column(tagsJSON, defaultValue: "[]")
-                t.column(notes)
-                t.column(conversationId)
-                t.column(metadataJSON, defaultValue: "{}")
-            })
+                // Create logs table with all fields
+                try db?.run(logsTable.create(ifNotExists: true) { t in
+                    t.column(id, primaryKey: true)
+                    t.column(timestamp)
+                    t.column(sourceFile)
+                    t.column(providerRaw)
+                    t.column(modelName)
+                    t.column(prompt)
+                    t.column(response)
+                    t.column(promptTokens)
+                    t.column(completionTokens)
+                    t.column(totalTokens)
+                    t.column(estimatedCost)
+                    t.column(duration)
+                    t.column(statusCode)
+                    t.column(errorMessage)
+                    t.column(isBookmarked, defaultValue: false)
+                    t.column(tagsJSON, defaultValue: "[]")
+                    t.column(notes)
+                    t.column(conversationId)
+                    t.column(metadataJSON, defaultValue: "{}")
+                })
 
-            // Create indexes
-            try db?.run(logsTable.createIndex(sourceFile, ifNotExists: true))
-            try db?.run(logsTable.createIndex(timestamp, ifNotExists: true))
-            try db?.run(logsTable.createIndex(isBookmarked, ifNotExists: true))
+                // Create indexes
+                try db?.run(logsTable.createIndex(sourceFile, ifNotExists: true))
+                try db?.run(logsTable.createIndex(timestamp, ifNotExists: true))
+                try db?.run(logsTable.createIndex(isBookmarked, ifNotExists: true))
 
-            // Migrate: add new columns if they don't exist (for existing DBs)
-            migrateSchema()
+                // Migrate: add new columns if they don't exist (for existing DBs)
+                migrateSchema()
 
-            // Create collections table
-            try db?.run(collectionsTable.create(ifNotExists: true) { t in
-                t.column(collectionId, primaryKey: true)
-                t.column(collectionName)
-                t.column(collectionDesc, defaultValue: "")
-                t.column(collectionCreatedAt)
-            })
+                // Create collections table
+                try db?.run(collectionsTable.create(ifNotExists: true) { t in
+                    t.column(collectionId, primaryKey: true)
+                    t.column(collectionName)
+                    t.column(collectionDesc, defaultValue: "")
+                    t.column(collectionCreatedAt)
+                })
 
-            // Create collection_logs junction table
-            try db?.run(collectionLogsTable.create(ifNotExists: true) { t in
-                t.column(clCollectionId)
-                t.column(clLogId)
-                t.primaryKey(clCollectionId, clLogId)
-            })
+                // Create collection_logs junction table
+                try db?.run(collectionLogsTable.create(ifNotExists: true) { t in
+                    t.column(clCollectionId)
+                    t.column(clLogId)
+                    t.primaryKey(clCollectionId, clLogId)
+                })
 
-            loadCollections()
-        } catch {
-            Logger.shared.error("数据库初始化失败: \(error.localizedDescription)")
+                Task { @MainActor in
+                    self.loadCollections()
+                }
+            } catch {
+                Logger.shared.error("数据库初始化失败: \(error.localizedDescription)")
+            }
         }
     }
 
@@ -158,43 +166,47 @@ final class DatabaseService: ObservableObject {
 
     func saveLog(_ log: ParsedLog) async {
         guard let db else { return }
-        do {
-            let metadata = (try? String(data: JSONSerialization.data(withJSONObject: log.metadata), encoding: .utf8)) ?? "{}"
-            let tags = (try? String(data: JSONSerialization.data(withJSONObject: log.tags), encoding: .utf8)) ?? "[]"
+        dbQueue.async {
+            do {
+                let metadata = (try? String(data: JSONSerialization.data(withJSONObject: log.metadata), encoding: .utf8)) ?? "{}"
+                let tags = (try? String(data: JSONSerialization.data(withJSONObject: log.tags), encoding: .utf8)) ?? "[]"
 
-            let insert = logsTable.insert(or: .ignore,
-                                          id <- log.id.uuidString,
-                                          timestamp <- log.timestamp.timeIntervalSince1970,
-                                          sourceFile <- log.sourceFile,
-                                          providerRaw <- log.provider?.rawValue,
-                                          modelName <- log.modelName,
-                                          prompt <- log.prompt,
-                                          response <- log.response,
-                                          promptTokens <- log.promptTokens,
-                                          completionTokens <- log.completionTokens,
-                                          totalTokens <- log.totalTokens,
-                                          estimatedCost <- nil,
-                                          duration <- log.duration,
-                                          statusCode <- log.statusCode,
-                                          errorMessage <- log.errorMessage,
-                                          isBookmarked <- log.isBookmarked,
-                                          tagsJSON <- tags,
-                                          notes <- log.notes,
-                                          conversationId <- log.conversationId,
-                                          metadataJSON <- metadata)
-            try db.run(insert)
-            // 轻量更新：仅当新行被成功插入时更新内存状态（避免全量 reloadLogs）
-            guard db.changes > 0 else { return }
-            var updated = logs
-            updated.insert(log, at: 0)
-            if updated.count > 100 { updated.removeLast() }
-            logs = updated
-            totalLogCount += 1
-            if let err = log.errorMessage, !err.isEmpty { errorLogCount += 1 }
-            if log.isBookmarked { bookmarkedCount += 1 }
-            refreshDashboardStats()
-        } catch {
-            Logger.shared.error("日志保存失败: \(error.localizedDescription)")
+                let insert = self.logsTable.insert(or: .ignore,
+                                              self.id <- log.id.uuidString,
+                                              self.timestamp <- log.timestamp.timeIntervalSince1970,
+                                              self.sourceFile <- log.sourceFile,
+                                              self.providerRaw <- log.provider?.rawValue,
+                                              self.modelName <- log.modelName,
+                                              self.prompt <- log.prompt,
+                                              self.response <- log.response,
+                                              self.promptTokens <- log.promptTokens,
+                                              self.completionTokens <- log.completionTokens,
+                                              self.totalTokens <- log.totalTokens,
+                                              self.estimatedCost <- nil,
+                                              self.duration <- log.duration,
+                                              self.statusCode <- log.statusCode,
+                                              self.errorMessage <- log.errorMessage,
+                                              self.isBookmarked <- log.isBookmarked,
+                                              self.tagsJSON <- tags,
+                                              self.notes <- log.notes,
+                                              self.conversationId <- log.conversationId,
+                                              self.metadataJSON <- metadata)
+                try db.run(insert)
+                guard db.changes > 0 else { return }
+                
+                Task { @MainActor in
+                    var updated = self.logs
+                    updated.insert(log, at: 0)
+                    if updated.count > 100 { updated.removeLast() }
+                    self.logs = updated
+                    self.totalLogCount += 1
+                    if let err = log.errorMessage, !err.isEmpty { self.errorLogCount += 1 }
+                    if log.isBookmarked { self.bookmarkedCount += 1 }
+                    self.refreshDashboardStats()
+                }
+            } catch {
+                Logger.shared.error("日志保存失败: \(error.localizedDescription)")
+            }
         }
     }
 
@@ -202,51 +214,55 @@ final class DatabaseService: ObservableObject {
     /// 用于初始扫描等批量写入场景，避免每条日志触发一次 reload。
     func saveLogs(_ logsToSave: [ParsedLog]) async {
         guard let db, !logsToSave.isEmpty else { return }
-        do {
-            var insertedCount = 0
-            try db.transaction {
-                for log in logsToSave {
-                    let metadata = (try? String(data: JSONSerialization.data(withJSONObject: log.metadata), encoding: .utf8)) ?? "{}"
-                    let tags = (try? String(data: JSONSerialization.data(withJSONObject: log.tags), encoding: .utf8)) ?? "[]"
-                    let insert = logsTable.insert(or: .ignore,
-                                                  id <- log.id.uuidString,
-                                                  timestamp <- log.timestamp.timeIntervalSince1970,
-                                                  sourceFile <- log.sourceFile,
-                                                  providerRaw <- log.provider?.rawValue,
-                                                  modelName <- log.modelName,
-                                                  prompt <- log.prompt,
-                                                  response <- log.response,
-                                                  promptTokens <- log.promptTokens,
-                                                  completionTokens <- log.completionTokens,
-                                                  totalTokens <- log.totalTokens,
-                                                  estimatedCost <- nil,
-                                                  duration <- log.duration,
-                                                  statusCode <- log.statusCode,
-                                                  errorMessage <- log.errorMessage,
-                                                  isBookmarked <- log.isBookmarked,
-                                                  tagsJSON <- tags,
-                                                  notes <- log.notes,
-                                                  conversationId <- log.conversationId,
-                                                  metadataJSON <- metadata)
-                    try db.run(insert)
-                    if db.changes > 0 {
-                        insertedCount += 1
+        dbQueue.async {
+            do {
+                var insertedCount = 0
+                try db.transaction {
+                    for log in logsToSave {
+                        let metadata = (try? String(data: JSONSerialization.data(withJSONObject: log.metadata), encoding: .utf8)) ?? "{}"
+                        let tags = (try? String(data: JSONSerialization.data(withJSONObject: log.tags), encoding: .utf8)) ?? "[]"
+                        let insert = self.logsTable.insert(or: .ignore,
+                                                      self.id <- log.id.uuidString,
+                                                      self.timestamp <- log.timestamp.timeIntervalSince1970,
+                                                      self.sourceFile <- log.sourceFile,
+                                                      self.providerRaw <- log.provider?.rawValue,
+                                                      self.modelName <- log.modelName,
+                                                      self.prompt <- log.prompt,
+                                                      self.response <- log.response,
+                                                      self.promptTokens <- log.promptTokens,
+                                                      self.completionTokens <- log.completionTokens,
+                                                      self.totalTokens <- log.totalTokens,
+                                                      self.estimatedCost <- nil,
+                                                      self.duration <- log.duration,
+                                                      self.statusCode <- log.statusCode,
+                                                      self.errorMessage <- log.errorMessage,
+                                                      self.isBookmarked <- log.isBookmarked,
+                                                      self.tagsJSON <- tags,
+                                                      self.notes <- log.notes,
+                                                      self.conversationId <- log.conversationId,
+                                                      self.metadataJSON <- metadata)
+                        try db.run(insert)
+                        if db.changes > 0 {
+                            insertedCount += 1
+                        }
                     }
                 }
+                if insertedCount > 0 {
+                    Task { @MainActor in
+                        await self.reloadLogs()
+                        self.refreshDashboardStats()
+                    }
+                }
+            } catch {
+                Logger.shared.error("批量日志保存失败: \(error.localizedDescription)")
             }
-            if insertedCount > 0 {
-                await reloadLogs()
-                refreshDashboardStats()
-            }
-        } catch {
-            Logger.shared.error("批量日志保存失败: \(error.localizedDescription)")
         }
     }
 
     func reloadLogs(limit: Int = 100, offset: Int = 0) async {
         guard let dbConnection = self.db else { return }
         
-        DispatchQueue.global(qos: .userInitiated).async {
+        dbQueue.async {
             do {
                 let fetched = try dbConnection.prepare(self.logsTable.order(self.timestamp.desc).limit(limit, offset: offset)).map { self.rowToParsedLog($0) }
                 
@@ -270,12 +286,13 @@ final class DatabaseService: ObservableObject {
 
     func fetchLogs(limit: Int = 100, offset: Int = 0) -> [ParsedLog] {
         guard let db else { return [] }
-
-        do {
-            return try db.prepare(logsTable.order(timestamp.desc).limit(limit, offset: offset)).map { self.rowToParsedLog($0) }
-        } catch {
-            Logger.shared.error("日志查询失败: \(error.localizedDescription)")
-            return []
+        return dbQueue.sync {
+            do {
+                return try db.prepare(logsTable.order(timestamp.desc).limit(limit, offset: offset)).map { self.rowToParsedLog($0) }
+            } catch {
+                Logger.shared.error("日志查询失败: \(error.localizedDescription)")
+                return []
+            }
         }
     }
 
@@ -284,7 +301,7 @@ final class DatabaseService: ObservableObject {
         let like = "%\(query)%"
 
         return await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
+            dbQueue.async {
                 do {
                     let queryTable = self.logsTable
                         .filter(
@@ -316,7 +333,7 @@ final class DatabaseService: ObservableObject {
         guard let dbConnection = self.db else { return [] }
 
         return await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
+            dbQueue.async {
                 do {
                     var query = self.logsTable.order(self.timestamp.desc)
 
@@ -357,46 +374,60 @@ final class DatabaseService: ObservableObject {
 
     func toggleBookmark(logId: UUID) async {
         guard let db else { return }
-        do {
-            let target = logsTable.filter(id == logId.uuidString)
-            if let row = try db.pluck(target) {
-                let current = row[isBookmarked]
-                try db.run(target.update(isBookmarked <- !current))
-                await reloadLogs()
+        dbQueue.async {
+            do {
+                let target = self.logsTable.filter(self.id == logId.uuidString)
+                if let row = try db.pluck(target) {
+                    let current = row[self.isBookmarked]
+                    try db.run(target.update(self.isBookmarked <- !current))
+                    Task { @MainActor in
+                        await self.reloadLogs()
+                    }
+                }
+            } catch {
+                Logger.shared.error("收藏切换失败: \(error.localizedDescription)")
             }
-        } catch {
-            Logger.shared.error("收藏切换失败: \(error.localizedDescription)")
         }
     }
 
     func updateNotes(logId: UUID, text: String) async {
         guard let db else { return }
-        do {
-            try db.run(logsTable.filter(id == logId.uuidString).update(notes <- text))
-            await reloadLogs()
-        } catch {
-            Logger.shared.error("备注更新失败: \(error.localizedDescription)")
+        dbQueue.async {
+            do {
+                try db.run(self.logsTable.filter(self.id == logId.uuidString).update(self.notes <- text))
+                Task { @MainActor in
+                    await self.reloadLogs()
+                }
+            } catch {
+                Logger.shared.error("备注更新失败: \(error.localizedDescription)")
+            }
         }
     }
 
     func updateTags(logId: UUID, newTags: [String]) async {
         guard let db else { return }
-        do {
-            let tagsStr = (try? String(data: JSONSerialization.data(withJSONObject: newTags), encoding: .utf8)) ?? "[]"
-            try db.run(logsTable.filter(id == logId.uuidString).update(tagsJSON <- tagsStr))
-            await reloadLogs()
-        } catch {
-            Logger.shared.error("标签更新失败: \(error.localizedDescription)")
+        dbQueue.async {
+            do {
+                let tagsStr = (try? String(data: JSONSerialization.data(withJSONObject: newTags), encoding: .utf8)) ?? "[]"
+                try db.run(self.logsTable.filter(self.id == logId.uuidString).update(self.tagsJSON <- tagsStr))
+                Task { @MainActor in
+                    await self.reloadLogs()
+                }
+            } catch {
+                Logger.shared.error("标签更新失败: \(error.localizedDescription)")
+            }
         }
     }
 
     func fetchBookmarkedLogs() -> [ParsedLog] {
         guard let db else { return [] }
-        do {
-            return try db.prepare(logsTable.filter(isBookmarked == true).order(timestamp.desc)).map(rowToParsedLog)
-        } catch {
-            Logger.shared.error("收藏查询失败: \(error.localizedDescription)")
-            return []
+        return dbQueue.sync {
+            do {
+                return try db.prepare(logsTable.filter(isBookmarked == true).order(timestamp.desc)).map(rowToParsedLog)
+            } catch {
+                Logger.shared.error("收藏查询失败: \(error.localizedDescription)")
+                return []
+            }
         }
     }
 
@@ -405,56 +436,79 @@ final class DatabaseService: ObservableObject {
     func createCollection(name: String, description: String = "") {
         guard let db else { return }
         let collection = LogCollection(name: name, description: description)
-        do {
-            try db.run(collectionsTable.insert(
-                collectionId <- collection.id.uuidString,
-                collectionName <- collection.name,
-                collectionDesc <- collection.description,
-                collectionCreatedAt <- collection.createdAt.timeIntervalSince1970
-            ))
-            loadCollections()
-        } catch {
-            Logger.shared.error("创建收藏集失败: \(error.localizedDescription)")
+        dbQueue.async {
+            do {
+                try db.run(self.collectionsTable.insert(
+                    self.collectionId <- collection.id.uuidString,
+                    self.collectionName <- collection.name,
+                    self.collectionDesc <- collection.description,
+                    self.collectionCreatedAt <- collection.createdAt.timeIntervalSince1970
+                ))
+                Task { @MainActor in
+                    self.loadCollections()
+                }
+            } catch {
+                Logger.shared.error("创建收藏集失败: \(error.localizedDescription)")
+            }
         }
     }
 
     func deleteCollection(id colId: UUID) {
         guard let db else { return }
-        do {
-            try db.run(collectionsTable.filter(collectionId == colId.uuidString).delete())
-            try db.run(collectionLogsTable.filter(clCollectionId == colId.uuidString).delete())
-            loadCollections()
-        } catch {
-            Logger.shared.error("删除收藏集失败: \(error.localizedDescription)")
+        dbQueue.async {
+            do {
+                try db.run(self.collectionsTable.filter(self.collectionId == colId.uuidString).delete())
+                try db.run(self.collectionLogsTable.filter(self.clCollectionId == colId.uuidString).delete())
+                Task { @MainActor in
+                    self.loadCollections()
+                }
+            } catch {
+                Logger.shared.error("删除收藏集失败: \(error.localizedDescription)")
+            }
         }
     }
 
     func addToCollection(logId: UUID, collectionId colId: UUID) {
         guard let db else { return }
-        do {
-            try db.run(collectionLogsTable.insert(or: .ignore,
-                clCollectionId <- colId.uuidString,
-                clLogId <- logId.uuidString
-            ))
-            loadCollections()
-        } catch {
-            Logger.shared.error("添加到收藏集失败: \(error.localizedDescription)")
+        dbQueue.async {
+            do {
+                try db.run(self.collectionLogsTable.insert(or: .ignore,
+                    self.clCollectionId <- colId.uuidString,
+                    self.clLogId <- logId.uuidString
+                ))
+                Task { @MainActor in
+                    self.loadCollections()
+                }
+            } catch {
+                Logger.shared.error("添加到收藏集失败: \(error.localizedDescription)")
+            }
         }
     }
 
     func removeFromCollection(logId: UUID, collectionId colId: UUID) {
         guard let db else { return }
-        do {
-            try db.run(collectionLogsTable
-                .filter(clCollectionId == colId.uuidString && clLogId == logId.uuidString)
-                .delete())
-            loadCollections()
-        } catch {
-            Logger.shared.error("从收藏集移除失败: \(error.localizedDescription)")
+        dbQueue.async {
+            do {
+                try db.run(self.collectionLogsTable
+                    .filter(self.clCollectionId == colId.uuidString && self.clLogId == logId.uuidString)
+                    .delete())
+                Task { @MainActor in
+                    self.loadCollections()
+                }
+            } catch {
+                Logger.shared.error("从收藏集移除失败: \(error.localizedDescription)")
+            }
         }
     }
 
     func fetchLogsInCollection(id colId: UUID) -> [ParsedLog] {
+        guard db != nil else { return [] }
+        return dbQueue.sync {
+            return fetchLogsInCollectionInternal(id: colId)
+        }
+    }
+
+    private func fetchLogsInCollectionInternal(id colId: UUID) -> [ParsedLog] {
         guard let db else { return [] }
         do {
             let join = logsTable.join(collectionLogsTable,
@@ -470,22 +524,27 @@ final class DatabaseService: ObservableObject {
 
     private func loadCollections() {
         guard let db else { return }
-        do {
-            collections = try db.prepare(collectionsTable.order(collectionCreatedAt.desc)).map { row in
-                let cId = UUID(uuidString: row[collectionId]) ?? UUID()
-                let logIds = (try? db.prepare(collectionLogsTable.filter(clCollectionId == row[collectionId])))?.compactMap { r in
-                    UUID(uuidString: r[clLogId])
-                } ?? []
-                return LogCollection(
-                    id: cId,
-                    name: row[collectionName],
-                    description: row[collectionDesc],
-                    createdAt: Date(timeIntervalSince1970: row[collectionCreatedAt]),
-                    logIds: logIds
-                )
+        dbQueue.async {
+            do {
+                let fetched = try db.prepare(self.collectionsTable.order(self.collectionCreatedAt.desc)).map { row in
+                    let cId = UUID(uuidString: row[self.collectionId]) ?? UUID()
+                    let logIds = (try? db.prepare(self.collectionLogsTable.filter(self.clCollectionId == row[self.collectionId])))?.compactMap { r in
+                        UUID(uuidString: r[self.clLogId])
+                    } ?? []
+                    return LogCollection(
+                        id: cId,
+                        name: row[self.collectionName],
+                        description: row[self.collectionDesc],
+                        createdAt: Date(timeIntervalSince1970: row[self.collectionCreatedAt]),
+                        logIds: logIds
+                    )
+                }
+                Task { @MainActor in
+                    self.collections = fetched
+                }
+            } catch {
+                Logger.shared.error("加载收藏集失败: \(error.localizedDescription)")
             }
-        } catch {
-            Logger.shared.error("加载收藏集失败: \(error.localizedDescription)")
         }
     }
 
@@ -502,7 +561,7 @@ final class DatabaseService: ObservableObject {
             daysToUse = self.lastDashboardDays
         }
 
-        DispatchQueue.global(qos: .userInitiated).async {
+        dbQueue.async {
             var stats = DashboardStats()
 
             do {
@@ -532,8 +591,6 @@ final class DatabaseService: ObservableObject {
                 if stats.totalTokens == 0 {
                     stats.totalTokens = stats.totalPromptTokens + stats.totalCompletionTokens
                 }
-
-                // Cost sum (Removed)
 
                 // Error count
                 stats.errorCount = try dbConnection.scalar(
@@ -730,14 +787,12 @@ final class DatabaseService: ObservableObject {
                     stats.slowestLog = self.rowToParsedLog(slowestRow)
                 }
                 
-                // Expensive spotlight removed
-                
                 if let largestRow = try dbConnection.pluck(filterTable.filter(self.totalTokens != nil).order(self.totalTokens.desc)) {
                     stats.largestPayloadLog = self.rowToParsedLog(largestRow)
                 }
                 
                 stats.localCallsCount = try dbConnection.scalar(
-                    filterTable.filter(self.providerRaw == LLMProvider.ollama.rawValue).count
+                    filterTable.filter(self.providerRaw == LLMProvider.ollama.rawValue || self.providerRaw == LLMProvider.lmstudio.rawValue).count
                 )
 
                 Task { @MainActor in
@@ -755,7 +810,7 @@ final class DatabaseService: ObservableObject {
     func fetchLogs(provider: LLMProvider?, since: Date, until: Date = Date()) async -> [ParsedLog] {
         guard let dbConnection = self.db else { return [] }
         return await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
+            dbQueue.async {
                 do {
                     var q = self.logsTable
                         .filter(self.timestamp >= since.timeIntervalSince1970 && self.timestamp <= until.timeIntervalSince1970)
@@ -784,7 +839,7 @@ final class DatabaseService: ObservableObject {
         guard let dbConnection = self.db else { return UsageAggregate() }
         
         return await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
+            dbQueue.async {
                 do {
                     var q = self.logsTable.filter(self.timestamp >= since.timeIntervalSince1970 && self.timestamp <= until.timeIntervalSince1970)
                     if let provider {
@@ -811,7 +866,7 @@ final class DatabaseService: ObservableObject {
     func fetchDistinctModels() async -> [String] {
         guard let dbConnection = self.db else { return [] }
         return await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
+            dbQueue.async {
                 do {
                     let result = try dbConnection.prepare(self.logsTable.select(distinct: self.modelName).filter(self.modelName != nil)).compactMap { $0[self.modelName] }
                     continuation.resume(returning: result)
@@ -825,7 +880,7 @@ final class DatabaseService: ObservableObject {
     func fetchDistinctProviders() async -> [LLMProvider] {
         guard let dbConnection = self.db else { return [] }
         return await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
+            dbQueue.async {
                 do {
                     let result = try dbConnection.prepare(self.logsTable.select(distinct: self.providerRaw).filter(self.providerRaw != nil)).compactMap { row -> LLMProvider? in
                         guard let raw = row[self.providerRaw] else { return nil }
@@ -845,7 +900,7 @@ final class DatabaseService: ObservableObject {
         let since = now.addingTimeInterval(-24 * 3600)
         
         return await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
+            dbQueue.async {
                 do {
                     var q = self.logsTable
                         .filter(self.timestamp >= since.timeIntervalSince1970 && self.timestamp <= now.timeIntervalSince1970)
@@ -884,69 +939,72 @@ final class DatabaseService: ObservableObject {
 
     func exportLogs(format: ExportFormat) -> URL? {
         guard let db else { return nil }
+        return dbQueue.sync {
+            let fileManager = FileManager.default
+            let exportFolder = Self.defaultDatabaseURL.deletingLastPathComponent().appendingPathComponent("Exports", isDirectory: true)
+            try? fileManager.createDirectory(at: exportFolder, withIntermediateDirectories: true, attributes: nil)
 
-        let fileManager = FileManager.default
-        let exportFolder = Self.defaultDatabaseURL.deletingLastPathComponent().appendingPathComponent("Exports", isDirectory: true)
-        try? fileManager.createDirectory(at: exportFolder, withIntermediateDirectories: true, attributes: nil)
+            let filename = "logs-\(Int(Date().timeIntervalSince1970)).\(format.fileExtension)"
+            let fileURL = exportFolder.appendingPathComponent(filename)
 
-        let filename = "logs-\(Int(Date().timeIntervalSince1970)).\(format.fileExtension)"
-        let fileURL = exportFolder.appendingPathComponent(filename)
+            do {
+                FileManager.default.createFile(atPath: fileURL.path, contents: nil)
+                let handle = try FileHandle(forWritingTo: fileURL)
+                defer { try? handle.close() }
 
-        do {
-            FileManager.default.createFile(atPath: fileURL.path, contents: nil)
-            let handle = try FileHandle(forWritingTo: fileURL)
-            defer { try? handle.close() }
-
-            let rows = try db.prepare(logsTable.order(timestamp.desc))
-            switch format {
-            case .json:
-                try handle.write(contentsOf: Data("[".utf8))
-                var first = true
-                for row in rows {
-                    let log = rowToParsedLog(row)
-                    let encoded = try JSONEncoder.pretty.encode(log)
-                    if first {
-                        first = false
-                    } else {
-                        try handle.write(contentsOf: Data(",".utf8))
+                let rows = try db.prepare(logsTable.order(timestamp.desc))
+                switch format {
+                case .json:
+                    try handle.write(contentsOf: Data("[".utf8))
+                    var first = true
+                    for row in rows {
+                        let log = rowToParsedLog(row)
+                        let encoded = try JSONEncoder.pretty.encode(log)
+                        if first {
+                            first = false
+                        } else {
+                            try handle.write(contentsOf: Data(",".utf8))
+                        }
+                        try handle.write(contentsOf: encoded)
                     }
-                    try handle.write(contentsOf: encoded)
+                    try handle.write(contentsOf: Data("]".utf8))
+                case .csv:
+                    try handle.write(contentsOf: Data("id,timestamp,provider,model,promptTokens,completionTokens,totalTokens,duration,error\n".utf8))
+                    for row in rows {
+                        let log = rowToParsedLog(row)
+                        let line = "\(log.id.uuidString),\(log.timestamp.timeIntervalSince1970),\(escapeCSV(log.provider?.displayName ?? "")),\(escapeCSV(log.modelName ?? "")),\(log.promptTokens.map(String.init) ?? ""),\(log.completionTokens.map(String.init) ?? ""),\(log.totalTokens.map(String.init) ?? ""),\(log.duration.map { String(format: "%.3f", $0) } ?? ""),\(escapeCSV(log.errorMessage ?? ""))\n"
+                        try handle.write(contentsOf: Data(line.utf8))
+                    }
                 }
-                try handle.write(contentsOf: Data("]".utf8))
-            case .csv:
-                try handle.write(contentsOf: Data("id,timestamp,provider,model,promptTokens,completionTokens,totalTokens,duration,error\n".utf8))
-                for row in rows {
-                    let log = rowToParsedLog(row)
-                    let line = "\(log.id.uuidString),\(log.timestamp.timeIntervalSince1970),\(escapeCSV(log.provider?.displayName ?? "")),\(escapeCSV(log.modelName ?? "")),\(log.promptTokens.map(String.init) ?? ""),\(log.completionTokens.map(String.init) ?? ""),\(log.totalTokens.map(String.init) ?? ""),\(log.duration.map { String(format: "%.3f", $0) } ?? ""),\(escapeCSV(log.errorMessage ?? ""))\n"
-                    try handle.write(contentsOf: Data(line.utf8))
-                }
+                return fileURL
+            } catch {
+                Logger.shared.error("日志导出失败: \(error.localizedDescription)")
+                return nil
             }
-            return fileURL
-        } catch {
-            Logger.shared.error("日志导出失败: \(error.localizedDescription)")
-            return nil
         }
     }
 
     func exportCollection(id colId: UUID, format: ExportFormat) -> URL? {
-        let collectionLogs = fetchLogsInCollection(id: colId)
-        guard !collectionLogs.isEmpty else { return nil }
+        return dbQueue.sync {
+            let collectionLogs = fetchLogsInCollectionInternal(id: colId)
+            guard !collectionLogs.isEmpty else { return nil }
 
-        let exportFolder = Self.defaultDatabaseURL.deletingLastPathComponent().appendingPathComponent("Exports", isDirectory: true)
-        try? FileManager.default.createDirectory(at: exportFolder, withIntermediateDirectories: true, attributes: nil)
+            let exportFolder = Self.defaultDatabaseURL.deletingLastPathComponent().appendingPathComponent("Exports", isDirectory: true)
+            try? FileManager.default.createDirectory(at: exportFolder, withIntermediateDirectories: true, attributes: nil)
 
-        let collection = collections.first { $0.id == colId }
-        let safeName = (collection?.name ?? "collection").replacingOccurrences(of: " ", with: "_")
-        let filename = "\(safeName)-\(Int(Date().timeIntervalSince1970)).\(format.fileExtension)"
-        let fileURL = exportFolder.appendingPathComponent(filename)
+            let collection = collections.first { $0.id == colId }
+            let safeName = (collection?.name ?? "collection").replacingOccurrences(of: " ", with: "_")
+            let filename = "\(safeName)-\(Int(Date().timeIntervalSince1970)).\(format.fileExtension)"
+            let fileURL = exportFolder.appendingPathComponent(filename)
 
-        do {
-            let encoded = try JSONEncoder.pretty.encode(collectionLogs)
-            try encoded.write(to: fileURL)
-            return fileURL
-        } catch {
-            Logger.shared.error("收藏集导出失败: \(error.localizedDescription)")
-            return nil
+            do {
+                let encoded = try JSONEncoder.pretty.encode(collectionLogs)
+                try encoded.write(to: fileURL)
+                return fileURL
+            } catch {
+                Logger.shared.error("收藏集导出失败: \(error.localizedDescription)")
+                return nil
+            }
         }
     }
 
@@ -954,11 +1012,15 @@ final class DatabaseService: ObservableObject {
 
     func clearAllLogs() async {
         guard let db else { return }
-        do {
-            try db.run(logsTable.delete())
-            await reloadLogs()
-        } catch {
-            Logger.shared.error("清空数据库失败: \(error.localizedDescription)")
+        dbQueue.async {
+            do {
+                try db.run(self.logsTable.delete())
+                Task { @MainActor in
+                    await self.reloadLogs()
+                }
+            } catch {
+                Logger.shared.error("清空数据库失败: \(error.localizedDescription)")
+            }
         }
     }
 
@@ -968,39 +1030,45 @@ final class DatabaseService: ObservableObject {
     @discardableResult
     func cleanupGarbageLogs() async -> Int {
         guard let db else { return 0 }
-        var deleted = 0
-        do {
-            // 1) 模型名污染
-            let blocklistSQL = """
-                DELETE FROM logs WHERE
-                  model_name IS NOT NULL AND (
-                    LENGTH(model_name) < 3
-                    OR LOWER(model_name) IN ('n_ctx','n_batch','n_gpu_layers','n_threads',
-                        'rope_freq_base','rope_freq_scale','filenotfounderror','valueerror',
-                        'typeerror','runtimeerror','indexerror','keyerror','modulenotfounderror',
-                        'permissionerror','true','false','none','null','openaichatmodel.builder')
-                    OR model_name GLOB '[0-9]*.[0-9]*'
-                  )
-            """
-            try db.run(blocklistSQL)
-            deleted += db.changes
+        return await withCheckedContinuation { continuation in
+            dbQueue.async {
+                var deleted = 0
+                do {
+                    // 1) 模型名污染
+                    let blocklistSQL = """
+                        DELETE FROM logs WHERE
+                          model_name IS NOT NULL AND (
+                            LENGTH(model_name) < 3
+                            OR LOWER(model_name) IN ('n_ctx','n_batch','n_gpu_layers','n_threads',
+                                'rope_freq_base','rope_freq_scale','filenotfounderror','valueerror',
+                                'typeerror','runtimeerror','indexerror','keyerror','modulenotfounderror',
+                                'permissionerror','true','false','none','null','openaichatmodel.builder')
+                            OR model_name GLOB '[0-9]*.[0-9]*'
+                          )
+                    """
+                    try db.run(blocklistSQL)
+                    deleted += db.changes
 
-            // 2) 老 claude-code 行（无 token，几千条）
-            let claudeSQL = """
-                DELETE FROM logs WHERE
-                  provider='anthropic' AND model_name='claude-code'
-                  AND (total_tokens IS NULL OR total_tokens = 0)
-                  AND (prompt_tokens IS NULL OR prompt_tokens = 0)
-            """
-            try db.run(claudeSQL)
-            deleted += db.changes
+                    // 2) 老 claude-code 行（无 token，几千条）
+                    let claudeSQL = """
+                        DELETE FROM logs WHERE
+                          provider='anthropic' AND model_name='claude-code'
+                          AND (total_tokens IS NULL OR total_tokens = 0)
+                          AND (prompt_tokens IS NULL OR prompt_tokens = 0)
+                    """
+                    try db.run(claudeSQL)
+                    deleted += db.changes
 
-            await reloadLogs()
-            Logger.shared.info("脏数据清理完成：删除 \(deleted) 条")
-        } catch {
-            Logger.shared.error("脏数据清理失败: \(error.localizedDescription)")
+                    Task { @MainActor in
+                        await self.reloadLogs()
+                    }
+                    Logger.shared.info("脏数据清理完成：删除 \(deleted) 条")
+                } catch {
+                    Logger.shared.error("脏数据清理失败: \(error.localizedDescription)")
+                }
+                continuation.resume(returning: deleted)
+            }
         }
-        return deleted
     }
 
     // MARK: - Helpers
@@ -1051,26 +1119,28 @@ final class DatabaseService: ObservableObject {
         guard let db else {
             return LogStats(totalCount: 0, errorCount: 0, totalTokens: 0, activeModels: 0)
         }
-        let startTs = startDate.timeIntervalSince1970
-        let endTs = endDate.timeIntervalSince1970
-        let range = logsTable.filter(timestamp >= startTs && timestamp <= endTs)
-        do {
-            let total = try db.scalar(range.count)
-            let errors = try db.scalar(
-                range.filter(errorMessage != nil && (errorMessage ?? "") != "").count
-            )
-            let totalTokens = (try db.scalar(range.select(totalTokens.sum))) ?? 0
-            let modelRows = try db.prepare(range.select(modelName).filter(modelName != nil))
-            let models = Set(modelRows.compactMap { $0[modelName] })
-            return LogStats(
-                totalCount: total,
-                errorCount: errors,
-                totalTokens: totalTokens,
-                activeModels: models.count
-            )
-        } catch {
-            Logger.shared.error("统计数据查询失败: \(error.localizedDescription)")
-            return LogStats(totalCount: 0, errorCount: 0, totalTokens: 0, activeModels: 0)
+        return dbQueue.sync {
+            let startTs = startDate.timeIntervalSince1970
+            let endTs = endDate.timeIntervalSince1970
+            let range = logsTable.filter(timestamp >= startTs && timestamp <= endTs)
+            do {
+                let total = try db.scalar(range.count)
+                let errors = try db.scalar(
+                    range.filter(errorMessage != nil && (errorMessage ?? "") != "").count
+                )
+                let totalTokens = (try db.scalar(range.select(totalTokens.sum))) ?? 0
+                let modelRows = try db.prepare(range.select(modelName).filter(modelName != nil))
+                let models = Set(modelRows.compactMap { $0[modelName] })
+                return LogStats(
+                    totalCount: total,
+                    errorCount: errors,
+                    totalTokens: totalTokens,
+                    activeModels: models.count
+                )
+            } catch {
+                Logger.shared.error("统计数据查询失败: \(error.localizedDescription)")
+                return LogStats(totalCount: 0, errorCount: 0, totalTokens: 0, activeModels: 0)
+            }
         }
     }
 
@@ -1081,29 +1151,31 @@ final class DatabaseService: ObservableObject {
         guard endTs > startTs, bucketCount > 0 else { return [] }
         let bucketInterval = (endTs - startTs) / Double(bucketCount)
         let range = logsTable.filter(timestamp >= startTs && timestamp <= endTs)
-        do {
-            let rows = try db.prepare(range.select(timestamp, errorMessage))
-            var counts = Array(repeating: 0, count: bucketCount)
-            var errorCounts = Array(repeating: 0, count: bucketCount)
-            for row in rows {
-                let t = row[timestamp]
-                let idx = Int((t - startTs) / bucketInterval)
-                guard idx >= 0 && idx < bucketCount else { continue }
-                counts[idx] += 1
-                if let err = row[errorMessage], !err.isEmpty {
-                    errorCounts[idx] += 1
+        return dbQueue.sync {
+            do {
+                let rows = try db.prepare(range.select(timestamp, errorMessage))
+                var counts = Array(repeating: 0, count: bucketCount)
+                var errorCounts = Array(repeating: 0, count: bucketCount)
+                for row in rows {
+                    let t = row[timestamp]
+                    let idx = Int((t - startTs) / bucketInterval)
+                    guard idx >= 0 && idx < bucketCount else { continue }
+                    counts[idx] += 1
+                    if let err = row[errorMessage], !err.isEmpty {
+                        errorCounts[idx] += 1
+                    }
                 }
+                return (0..<bucketCount).map { i in
+                    TrendPoint(
+                        date: Date(timeIntervalSince1970: startTs + Double(i) * bucketInterval),
+                        count: counts[i],
+                        errorCount: errorCounts[i]
+                    )
+                }
+            } catch {
+                Logger.shared.error("趋势数据查询失败: \(error.localizedDescription)")
+                return []
             }
-            return (0..<bucketCount).map { i in
-                TrendPoint(
-                    date: Date(timeIntervalSince1970: startTs + Double(i) * bucketInterval),
-                    count: counts[i],
-                    errorCount: errorCounts[i]
-                )
-            }
-        } catch {
-            Logger.shared.error("趋势数据查询失败: \(error.localizedDescription)")
-            return []
         }
     }
 
@@ -1114,21 +1186,30 @@ final class DatabaseService: ObservableObject {
             bookmarkedCount = logs.lazy.filter { $0.isBookmarked }.count
             return
         }
-        do {
-            totalLogCount = try db.scalar(logsTable.count)
-            errorLogCount = try db.scalar(
-                logsTable
-                    .filter(errorMessage != nil && (errorMessage ?? "") != "")
-                    .count
-            )
-            bookmarkedCount = try db.scalar(
-                logsTable.filter(isBookmarked == true).count
-            )
-        } catch {
-            totalLogCount = logs.count
-            errorLogCount = logs.lazy.filter { $0.errorMessage != nil }.count
-            bookmarkedCount = logs.lazy.filter { $0.isBookmarked }.count
-            Logger.shared.error("统计计数更新失败: \(error.localizedDescription)")
+        dbQueue.async {
+            do {
+                let total = try db.scalar(self.logsTable.count)
+                let errors = try db.scalar(
+                    self.logsTable
+                        .filter(self.errorMessage != nil && (self.errorMessage ?? "") != "")
+                        .count
+                )
+                let bookmarked = try db.scalar(
+                    self.logsTable.filter(self.isBookmarked == true).count
+                )
+                Task { @MainActor in
+                    self.totalLogCount = total
+                    self.errorLogCount = errors
+                    self.bookmarkedCount = bookmarked
+                }
+            } catch {
+                Task { @MainActor in
+                    self.totalLogCount = self.logs.count
+                    self.errorLogCount = self.logs.lazy.filter { $0.errorMessage != nil }.count
+                    self.bookmarkedCount = self.logs.lazy.filter { $0.isBookmarked }.count
+                }
+                Logger.shared.error("统计计数更新失败: \(error.localizedDescription)")
+            }
         }
     }
 

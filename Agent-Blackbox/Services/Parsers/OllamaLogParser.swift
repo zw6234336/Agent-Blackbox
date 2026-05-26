@@ -18,7 +18,7 @@ struct OllamaLogParser: LogParser {
             
             // Ollama server logs contain model loading, generation events
             if line.contains("model") || line.contains("generate") || line.contains("eval") {
-                let model = firstMatch(in: line, pattern: #"model[=:\s]+["']?([\w\-.:]+)"#)
+                let model = firstMatch(in: line, pattern: #"model[=:\s]+["']?([\w\-.\/:@]+)"#)
                 let totalDuration = firstMatch(in: line, pattern: #"total_duration[=:\s]+(\d+)"#)
                 let evalCount = firstMatch(in: line, pattern: #"eval_count[=:\s]+(\d+)"#)
                 let promptEvalCount = firstMatch(in: line, pattern: #"prompt_eval_count[=:\s]+(\d+)"#)

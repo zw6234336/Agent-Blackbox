@@ -402,7 +402,7 @@ struct SettingsView: View {
                     .foregroundStyle(.green)
             }
         } else {
-            let pathExists = FileManager.default.fileExists(atPath: client.settingsURL.path)
+            let pathExists = clientInterception.existsStates[client] ?? false
             Text(pathExists ? "就绪 (未接管)" : "未检测到该插件配置文件")
                 .font(.caption2)
                 .foregroundStyle(.secondary)

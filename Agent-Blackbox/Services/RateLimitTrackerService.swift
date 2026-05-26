@@ -12,6 +12,15 @@ final class RateLimitTrackerService: ObservableObject {
     private weak var config: ConfigService?
     private var timer: Timer?
 
+    // Cache to prevent CPU/database overhead when idle
+    private var lastLogCount = -1
+    private var lastRefreshDay = -1
+    private var cachedActiveProviders: [LLMProvider] = []
+    private var cachedLogs1h: [String: [ParsedLog]] = [:]
+    private var cachedLogs5h: [String: [ParsedLog]] = [:]
+    private var cachedDailyAgg: [String: DatabaseService.UsageAggregate] = [:]
+    private var cachedMonthlyAgg: [String: DatabaseService.UsageAggregate] = [:]
+
     func bind(database: DatabaseService, config: ConfigService) {
         self.database = database
         self.config = config
@@ -42,12 +51,23 @@ final class RateLimitTrackerService: ObservableObject {
         let now = Date()
         let limits = config.config.providerRateLimits
 
+        let currentTotalCount = database.totalLogCount
+        let currentDay = Calendar.current.component(.day, from: now)
+        let dayOrCountChanged = (currentTotalCount != lastLogCount) || (currentDay != lastRefreshDay)
+
         // 仅显示出现过日志的 provider（避免 15 个空卡片）
-        let activeProviders = await database.fetchDistinctProviders()
+        let activeProviders: [LLMProvider]
+        if dayOrCountChanged {
+            activeProviders = await database.fetchDistinctProviders()
+            cachedActiveProviders = activeProviders
+        } else {
+            activeProviders = cachedActiveProviders
+        }
+
         var newSnapshots: [ProviderUsageSnapshot] = []
         for provider in activeProviders {
             let limit = limits[provider.rawValue] ?? ProviderRateLimit.defaultLocal
-            let snap = await computeSnapshot(provider: provider, limit: limit, now: now, database: database)
+            let snap = await computeSnapshot(provider: provider, limit: limit, now: now, database: database, dayOrCountChanged: dayOrCountChanged)
             newSnapshots.append(snap)
         }
         // 按 24h 调用量倒序
@@ -55,24 +75,55 @@ final class RateLimitTrackerService: ObservableObject {
 
         // 全局汇总（不区分 provider，用合并后的最大 limit 总和）
         let aggregateLimit = aggregateGlobalLimit(from: limits, activeProviders: activeProviders)
-        let global = await computeSnapshot(provider: nil, limit: aggregateLimit, now: now, database: database)
+        let global = await computeSnapshot(provider: nil, limit: aggregateLimit, now: now, database: database, dayOrCountChanged: dayOrCountChanged)
 
         snapshots = newSnapshots
         globalSnapshot = global
         updatedAt = now
+        lastLogCount = currentTotalCount
+        lastRefreshDay = currentDay
     }
 
     // MARK: - Snapshot Computation
 
-    private func computeSnapshot(provider: LLMProvider?, limit: ProviderRateLimit, now: Date, database: DatabaseService) async -> ProviderUsageSnapshot {
+    private func computeSnapshot(
+        provider: LLMProvider?,
+        limit: ProviderRateLimit,
+        now: Date,
+        database: DatabaseService,
+        dayOrCountChanged: Bool
+    ) async -> ProviderUsageSnapshot {
+        let key = provider?.rawValue ?? "global"
+        
         // 滑动窗口时间点
         let oneMinAgo  = now.addingTimeInterval(-60)
         let oneHourAgo = now.addingTimeInterval(-3600)
         let dayStart   = Calendar.current.startOfDay(for: now)
         let monthStart = startOfMonth(now)
 
-        // 拉取最近 1 小时的明细日志（用于并发/RPM/TPM）
-        let logs1h = await database.fetchLogs(provider: provider, since: oneHourAgo, until: now)
+        let logs1h: [ParsedLog]
+        let dayAgg: DatabaseService.UsageAggregate
+        let monthAgg: DatabaseService.UsageAggregate
+
+        if !dayOrCountChanged,
+           let prevLogs1h = cachedLogs1h[key],
+           let prevDaily = cachedDailyAgg[key],
+           let prevMonthly = cachedMonthlyAgg[key] {
+            // In-memory filter of existing logs
+            logs1h = prevLogs1h.filter { $0.timestamp >= oneHourAgo }
+            dayAgg = prevDaily
+            monthAgg = prevMonthly
+        } else {
+            // Pull from DB
+            logs1h = await database.fetchLogs(provider: provider, since: oneHourAgo, until: now)
+            dayAgg = await database.aggregateUsage(provider: provider, since: dayStart, until: now)
+            monthAgg = await database.aggregateUsage(provider: provider, since: monthStart, until: now)
+            
+            cachedLogs1h[key] = logs1h
+            cachedDailyAgg[key] = dayAgg
+            cachedMonthlyAgg[key] = monthAgg
+        }
+
         let logs1m = logs1h.filter { $0.timestamp >= oneMinAgo }
 
         // 1分钟聚合
@@ -82,10 +133,6 @@ final class RateLimitTrackerService: ObservableObject {
         // 1小时聚合
         let req1h = logs1h.count
         let tok1h = logs1h.reduce(0) { $0 + ($1.totalTokens ?? (($1.promptTokens ?? 0) + ($1.completionTokens ?? 0))) }
-
-        // 当日聚合（从 DB 直接聚合，避免拉太多行）
-        let dayAgg   = await database.aggregateUsage(provider: provider, since: dayStart, until: now)
-        let monthAgg = await database.aggregateUsage(provider: provider, since: monthStart, until: now)
 
         // 构造各窗口
         var windows: [RateWindow] = []
@@ -114,7 +161,13 @@ final class RateLimitTrackerService: ObservableObject {
         // 5 小时请求窗口（Kimi 等消费套餐的滑动窗口）
         if let req5h = limit.fiveHourRequestLimit {
             let fiveHourAgo = now.addingTimeInterval(-5 * 3600)
-            let logs5h = await database.fetchLogs(provider: provider, since: fiveHourAgo, until: now)
+            let logs5h: [ParsedLog]
+            if !dayOrCountChanged, let prevLogs5h = cachedLogs5h[key] {
+                logs5h = prevLogs5h.filter { $0.timestamp >= fiveHourAgo }
+            } else {
+                logs5h = await database.fetchLogs(provider: provider, since: fiveHourAgo, until: now)
+                cachedLogs5h[key] = logs5h
+            }
             windows.append(makeWindow(.requests5h, used: Double(logs5h.count), limit: Double(req5h),
                                       unit: "req", resetsAt: now.addingTimeInterval(5 * 3600), windowMin: 5 * 60))
         }

@@ -259,25 +259,44 @@ final class ProxyServerService: ObservableObject {
            let model = json["model"] as? String {
             
             let modelLower = model.lowercased()
-            if modelLower.contains("deepseek") {
-                Logger.shared.info("网关代理: 检测到 DeepSeek 模型 \(model)，自动路由至 DeepSeek 官方 API")
-                return "https://api.deepseek.com"
+            let isLocalModel = modelLower.contains("gguf") ||
+                               modelLower.contains("mlx") ||
+                               modelLower.contains("local") ||
+                               (modelLower.contains("/") && !modelLower.hasPrefix("ft:"))
+            
+            if isLocalModel {
+                if modelLower.contains("ollama") {
+                    Logger.shared.info("网关代理: 检测到 Ollama 模型 \(model)，自动路由至本地 Ollama 默认服务")
+                    return "http://127.0.0.1:11434"
+                } else {
+                    let customUpstream = config.openaiUpstreamUrl
+                    if customUpstream.contains("api.openai.com") {
+                        Logger.shared.info("网关代理: 检测到本地模型 \(model)，自动路由至本地通用模型服务 (LM Studio/MLX)")
+                        return "http://127.0.0.1:1234"
+                    } else {
+                        Logger.shared.info("网关代理: 检测到本地模型 \(model)，使用配置的自定义上游: \(customUpstream)")
+                        return customUpstream
+                    }
+                }
             }
-            if modelLower.contains("gemini") {
-                Logger.shared.info("网关代理: 检测到 Gemini 模型 \(model)，自动路由至 Google Gemini 官方 API")
-                return "https://generativelanguage.googleapis.com/v1beta/openai"
-            }
-            if modelLower.contains("qwen") {
-                Logger.shared.info("网关代理: 检测到 Qwen 模型 \(model)，自动路由至阿里 DashScope API")
-                return "https://dashscope.aliyuncs.com"
-            }
-            if modelLower.contains("glm-") || modelLower.contains("zhipu") {
-                Logger.shared.info("网关代理: 检测到智谱 GLM 模型 \(model)，自动路由至智谱清言 API")
-                return "https://open.bigmodel.cn/api/paas/v4"
-            }
-            if modelLower.contains("ollama") {
-                Logger.shared.info("网关代理: 检测到 Ollama 模型 \(model)，自动路由至本地 Ollama 默认服务")
-                return "http://127.0.0.1:11434"
+            
+            if !isLocalModel {
+                if modelLower.contains("deepseek") {
+                    Logger.shared.info("网关代理: 检测到 DeepSeek 模型 \(model)，自动路由至 DeepSeek 官方 API")
+                    return "https://api.deepseek.com"
+                }
+                if modelLower.contains("gemini") {
+                    Logger.shared.info("网关代理: 检测到 Gemini 模型 \(model)，自动路由至 Google Gemini 官方 API")
+                    return "https://generativelanguage.googleapis.com/v1beta/openai"
+                }
+                if modelLower.contains("qwen") {
+                    Logger.shared.info("网关代理: 检测到 Qwen 模型 \(model)，自动路由至阿里 DashScope API")
+                    return "https://dashscope.aliyuncs.com"
+                }
+                if modelLower.contains("glm-") || modelLower.contains("zhipu") {
+                    Logger.shared.info("网关代理: 检测到智谱 GLM 模型 \(model)，自动路由至智谱清言 API")
+                    return "https://open.bigmodel.cn/api/paas/v4"
+                }
             }
         }
         
@@ -481,7 +500,18 @@ final class ProxyServerService: ObservableObject {
         // Classify Provider based on path and model name keywords
         let provider: LLMProvider
         let modelLower = model.lowercased()
-        if isAnthropic || modelLower.contains("claude") || modelLower.contains("anthropic") {
+        let isLocalModel = modelLower.contains("gguf") ||
+                           modelLower.contains("mlx") ||
+                           modelLower.contains("local") ||
+                           (modelLower.contains("/") && !modelLower.hasPrefix("ft:"))
+        
+        if isLocalModel {
+            if modelLower.contains("ollama") {
+                provider = .ollama
+            } else {
+                provider = .lmstudio
+            }
+        } else if isAnthropic || modelLower.contains("claude") || modelLower.contains("anthropic") {
             provider = .anthropic
         } else if modelLower.contains("gpt") || modelLower.contains("o1") || modelLower.contains("o3") {
             provider = .openai
@@ -634,11 +664,18 @@ private class ProxySessionDelegate: NSObject, URLSessionDataDelegate {
             
             // Send raw data body
             if !responseData.isEmpty {
-                clientConnection.send(content: responseData, completion: .contentProcessed({ _ in }))
+                let conn = clientConnection
+                clientConnection.send(content: responseData, completion: .contentProcessed({ _ in
+                    conn.cancel()
+                }))
+            } else {
+                clientConnection.cancel()
             }
         } else {
             if isStreamingResponse {
                 sendChunkEnd(connection: clientConnection)
+            } else {
+                clientConnection.cancel()
             }
         }
         

@@ -108,6 +108,7 @@ struct MonitorView: View {
                     }
                     .padding()
                 }
+                .scrollWheelKeepAlive()
             }
         }
     }

@@ -108,6 +108,16 @@ extension LogParser {
             return .custom
         }
         
+        let isLocalModel = model.contains("gguf") ||
+                           model.contains("mlx") ||
+                           model.contains("local") ||
+                           (model.contains("/") && !model.hasPrefix("ft:"))
+        
+        if isLocalModel {
+            if model.contains("ollama") { return .ollama }
+            return .lmstudio
+        }
+        
         if model.contains("gpt") || model.contains("o1") || model.contains("o3") || model.contains("o4") { return .openai }
         if model.contains("claude") { return .anthropic }
         if model.contains("gemini") || model.contains("palm") { return .google }

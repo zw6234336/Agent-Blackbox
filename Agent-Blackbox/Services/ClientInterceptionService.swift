@@ -49,10 +49,19 @@ enum InterceptClient: String, CaseIterable, Identifiable {
 final class ClientInterceptionService: ObservableObject {
     @Published var activeStates: [InterceptClient: Bool] = [:]
     @Published var errors: [InterceptClient: String] = [:]
+    @Published var existsStates: [InterceptClient: Bool] = [:]
     
     private var configService: ConfigService?
     
     init() {
+        // Initial check of existences
+        let fm = FileManager.default
+        var states: [InterceptClient: Bool] = [:]
+        for client in InterceptClient.allCases {
+            states[client] = fm.fileExists(atPath: client.settingsURL.path)
+        }
+        self.existsStates = states
+        
         // Register for app termination to restore all original settings automatically
         NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification,
@@ -72,6 +81,12 @@ final class ClientInterceptionService: ObservableObject {
     
     func syncWithConfig() {
         guard let config = configService?.config else { return }
+        
+        let fm = FileManager.default
+        for client in InterceptClient.allCases {
+            existsStates[client] = fm.fileExists(atPath: client.settingsURL.path)
+        }
+        
         updateInterceptionState(.vscodeCline, shouldIntercept: config.enableVSCodeClineInterception)
         updateInterceptionState(.vscodeRooCline, shouldIntercept: config.enableVSCodeRooClineInterception)
         updateInterceptionState(.cursorCline, shouldIntercept: config.enableCursorClineInterception)

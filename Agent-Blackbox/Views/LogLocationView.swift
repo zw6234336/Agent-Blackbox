@@ -249,6 +249,7 @@ struct InteractionView: View {
                 .padding()
             }
         }
+        .scrollWheelKeepAlive()
         .navigationTitle("交互详情")
     }
 }
