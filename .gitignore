@@ -30,6 +30,8 @@ Pods/
 
 # App specific
 Logs/
+*.log
+app.log
 Config/user-config.plist
 data/
 

@@ -141,14 +141,14 @@ final class PlanDetectionService: ObservableObject {
         ]
         for path in vscdbPaths {
             if let token = readCopilotTokenFromVSCDB(path: path) {
-                Logger.shared.info("Copilot 检测: 从 vscdb 读取到 token (prefix: \(token.prefix(8)))")
+                Logger.shared.info("Copilot 检测: 从 vscdb 读取到 token (prefix: \(token.prefix(4))...)")
                 tokens.append(token)
             }
         }
 
         // 2. gh CLI token（可能无 copilot scope，但可尝试）
         if let ghToken = readGHCLIToken() {
-            Logger.shared.info("Copilot 检测: 从 gh CLI 读取到 token (prefix: \(ghToken.prefix(8)))")
+            Logger.shared.info("Copilot 检测: 从 gh CLI 读取到 token (prefix: \(ghToken.prefix(4))...)")
             tokens.append(ghToken)
         }
 
@@ -366,7 +366,7 @@ final class PlanDetectionService: ObservableObject {
 
         if hasCopilotExtension {
             // 有扩展 → 至少是 Free 级别，按 Pro 估算（无法精确区分 Free/Pro/Business）
-            Logger.shared.info("Copilot 检测: GitHub 用户 \(login)，plan=\(githubPlan)，检测到 Copilot 扩展")
+            Logger.shared.info("Copilot 检测: GitHub 用户 \(Self.maskString(login))，plan=\(githubPlan)，检测到 Copilot 扩展")
             return DetectedPlan(
                 provider: .copilot,
                 planName: "Copilot (已激活)",
@@ -376,7 +376,7 @@ final class PlanDetectionService: ObservableObject {
             )
         }
 
-        Logger.shared.info("Copilot 检测: GitHub 用户 \(login)，plan=\(githubPlan)，无 Copilot 扩展")
+        Logger.shared.info("Copilot 检测: GitHub 用户 \(Self.maskString(login))，plan=\(githubPlan)，无 Copilot 扩展")
         return nil
     }
 
@@ -497,7 +497,7 @@ final class PlanDetectionService: ObservableObject {
         }
 
         let email = readCursorEmail()
-        let planName = email != nil ? "Cursor Pro (\(email!))" : "Cursor (已授权)"
+        let planName = email != nil ? "Cursor Pro (\(Self.maskEmail(email!)))" : "Cursor (已授权)"
         return DetectedPlan(
             provider: .cursor,
             planName: planName,
@@ -624,7 +624,7 @@ final class PlanDetectionService: ObservableObject {
         if tokenLooksLikeAnthropicAPI {
             return DetectedPlan(
                 provider: .anthropic,
-                planName: "Claude Code (API Key, 经代理: \(baseURL))",
+                planName: "Claude Code (API Key, 经代理: \(Self.sanitizeURL(baseURL)))",
                 rateLimit: ProviderRateLimit.defaultAnthropicTier1,
                 source: "Claude Code 配置",
                 detectedAt: Date()
@@ -643,10 +643,10 @@ final class PlanDetectionService: ObservableObject {
         }
 
         // 既不像 Z.AI 也不像 Anthropic、又是非官方 base URL → 标为"未知后端"，不臆测配额
-        Logger.shared.info("Claude Code 检测: 无法识别后端 (baseURL=\(baseURL))，标为未知")
+        Logger.shared.info("Claude Code 检测: 无法识别后端 (baseURL=\(Self.sanitizeURL(baseURL)))，标为未知")
         return DetectedPlan(
             provider: .anthropic,
-            planName: "Claude Code (未知后端: \(baseURL))",
+            planName: "Claude Code (未知后端: \(Self.sanitizeURL(baseURL)))",
             rateLimit: ProviderRateLimit(),
             source: "Claude Code 配置",
             detectedAt: Date()
@@ -654,7 +654,7 @@ final class PlanDetectionService: ObservableObject {
     }
 
     /// 检查字符串是否符合 Z.AI API key 格式：32 位 hex + "." + 16 位字母数字
-    /// 例如：71c15e12c34245b99cf0577fe6b12b54.Y84lu4pdnz7uHjVw
+    /// 例如：00000000111111112222222233333333.AbCdEfGh12345678
     private func isZAIKeyFormat(_ s: String) -> Bool {
         let parts = s.split(separator: ".", maxSplits: 1, omittingEmptySubsequences: false)
         guard parts.count == 2 else { return false }
@@ -689,11 +689,12 @@ final class PlanDetectionService: ObservableObject {
         guard hasAccessToken else { return nil }
 
         let projectId = account["projectId"] as? String ?? ""
+        let maskedEmail = Self.maskEmail(email)
         let displayName = projectId.isEmpty
-            ? "Antigravity Preview (\(email))"
-            : "Antigravity Preview (\(email) / \(projectId))"
+            ? "Antigravity Preview (\(maskedEmail))"
+            : "Antigravity Preview (\(maskedEmail) / \(projectId))"
 
-        Logger.shared.info("Antigravity 检测: \(email) 已登录")
+        Logger.shared.info("Antigravity 检测: \(maskedEmail) 已登录")
         return DetectedPlan(
             provider: .antigravity,
             planName: displayName,
@@ -717,7 +718,7 @@ final class PlanDetectionService: ObservableObject {
               let key = zai["key"] as? String, !key.isEmpty
         else { return nil }
 
-        Logger.shared.info("Z.AI 检测: 在 Pi 配置中找到 key (prefix=\(key.prefix(8)))")
+        Logger.shared.info("Z.AI 检测: 在 Pi 配置中找到 key (prefix=\(key.prefix(4))...)")
         return DetectedPlan(
             provider: .zhipu,
             planName: "Z.AI Coding Plan (经 Pi)",
@@ -725,5 +726,36 @@ final class PlanDetectionService: ObservableObject {
             source: "Pi Agent 配置",
             detectedAt: Date()
         )
+    }
+
+    // MARK: - 脱敏工具方法
+
+    /// 邮箱脱敏：user@domain.com → u***@domain.com
+    private static func maskEmail(_ email: String) -> String {
+        let parts = email.split(separator: "@", maxSplits: 1)
+        guard parts.count == 2 else { return "***" }
+        let local = parts[0]
+        let domain = parts[1]
+        if local.count <= 1 {
+            return "*@\(domain)"
+        }
+        return "\(local.prefix(1))***@\(domain)"
+    }
+
+    /// 通用字符串脱敏：保留首尾各 1 字符，中间用 ***
+    private static func maskString(_ s: String) -> String {
+        guard s.count > 2 else { return "***" }
+        return "\(s.prefix(1))***\(s.suffix(1))"
+    }
+
+    /// URL 脱敏：移除 userinfo（user:password@）部分
+    private static func sanitizeURL(_ urlStr: String) -> String {
+        guard var components = URLComponents(string: urlStr) else { return urlStr }
+        if components.user != nil || components.password != nil {
+            components.user = nil
+            components.password = nil
+            return components.string ?? urlStr
+        }
+        return urlStr
     }
 }
