@@ -2,10 +2,6 @@
 
 An LLM Observability Gateway, Traffic Monitor & Budget Guard for Autonomous AI Agents (Cline, Claude Code, Cursor, Pi, etc.) on macOS.
 
-<p align="center">
-  <img src="docs/screenshots/main-view-dashboard.png" width="800" alt="Agent Blackbox Dashboard">
-</p>
-
 ---
 
 > [简体中文版](#简体中文版)
@@ -21,6 +17,14 @@ An LLM Observability Gateway, Traffic Monitor & Budget Guard for Autonomous AI A
 Autonomous AI agents (such as Cline, Claude Code, and Pi Agent) perform iterative workflows (coding, compiling, testing). If they fail to fix an error, they can fall into a high-frequency **infinite loop**, consuming millions of API tokens and costing hundreds of dollars in minutes. 
 
 Agent Blackbox provides a local gateway sandbox that intercept these loops, estimates costs, visualizes traffic, and gives developers the tools to inspect payloads and enforce emergency limiters.
+
+### Gallery
+
+| Redesigned Dashboard | Log List & Inspector |
+| :---: | :---: |
+| ![Dashboard](docs/screenshots/main-view-dashboard.png) | ![Log List & Inspector](docs/screenshots/main-view-logs.png) |
+| **Directory Monitor** | **Analytics & Statistics** |
+| ![Directory Monitor](docs/screenshots/main-view-monitor.png) | ![Analytics & Statistics](docs/screenshots/main-view-statistics.png) |
 
 ---
 
@@ -143,6 +147,14 @@ If automatic file access is blocked by macOS Sandbox permissions:
 自治 AI 代理（如 Cline、Claude Code 和 Pi Agent）在执行“编写-编译-测试”的循环任务时，一旦遇到无法解决的编译错误，极易陷入高频重复相同的 **死循环**，在数分钟内瞬间烧掉数百万 Token 和数百美元的云端账单。
 
 Agent Blackbox 提供了一个本地网关沙盒，实时捕获此类死循环，进行资费估算，以可视化曲线反映吞吐趋势，并在异常发生时提供“一键熔断”手段保护开发者资金安全。
+
+### 界面预览
+
+| 开发者自研看板 (Dashboard) | 日志列表与详情解析 |
+| :---: | :---: |
+| ![Dashboard](docs/screenshots/main-view-dashboard.png) | ![Log List & Inspector](docs/screenshots/main-view-logs.png) |
+| **本地目录监控 (Monitor)** | **会话冷冻图表与统计 (Analytics)** |
+| ![Directory Monitor](docs/screenshots/main-view-monitor.png) | ![Analytics & Statistics](docs/screenshots/main-view-statistics.png) |
 
 ---
 
