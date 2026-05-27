@@ -16,12 +16,16 @@ import AppKit
 /// `NSViewRepresentable`) that:
 ///   1. Maintains an always-active `NSTrackingArea`, preventing AppKit from
 ///      optimising away mouse-tracking for the region.
-///   2. Overrides `scrollWheel(with:)` to forward the event up the
-///      responder / superview chain at the **AppKit** level, bypassing
-///      SwiftUI's sometimes-dormant internal routing.
+///   2. Overrides `scrollWheel(with:)` to walk the **entire** superview chain
+///      until it finds the nearest `NSScrollView`, then forwards the event
+///      directly to it.  If no `NSScrollView` is found, it falls back to
+///      forwarding to `nextResponder` so the event still has a chance to
+///      reach the correct handler via the responder chain.
 ///   3. Returns `nil` from `hitTest(_:)` so it never intercepts clicks,
 ///      drags, or any other interaction — it is purely a scroll-event
 ///      "keep-alive" shim.
+///   4. Overrides `mouseEntered` / `mouseMoved` to keep the AppKit event
+///      routing table entry for this view warm even after long idle periods.
 ///
 /// Usage:
 /// ```swift
@@ -66,12 +70,38 @@ struct ScrollWheelForwarder: NSViewRepresentable {
             addTrackingArea(area)
         }
 
-        // Forward scroll-wheel events up the AppKit superview chain.
-        // This is the key fix: even if SwiftUI's internal dispatcher has
-        // gone dormant, the AppKit superview (which hosts the SwiftUI
-        // ScrollView's backing NSScrollView) will still process the event.
+        // Walk the superview chain to find the nearest NSScrollView and
+        // forward the scroll-wheel event directly to it.  This is the key
+        // fix: SwiftUI's deeply nested NSView hierarchy means the immediate
+        // `superview` is almost certainly a layout container (e.g.
+        // _NSHostingView, NSSplitView, etc.), NOT the actual NSScrollView.
+        // Forwarding only to `superview` (the old approach) lost the event
+        // in the void.  Walking up until we hit NSScrollView guarantees
+        // delivery even after SwiftUI's internal dispatcher has gone dormant.
         override func scrollWheel(with event: NSEvent) {
-            superview?.scrollWheel(with: event)
+            // Walk up the superview chain to find an NSScrollView.
+            var candidate = superview
+            while let view = candidate {
+                if let scrollView = view as? NSScrollView {
+                    scrollView.scrollWheel(with: event)
+                    return
+                }
+                candidate = view.superview
+            }
+
+            // Fallback: no NSScrollView found — use the responder chain
+            // so the event still has a chance to be handled somewhere.
+            nextResponder?.scrollWheel(with: event)
+        }
+
+        // Keep-alive: absorbing mouseEntered / mouseMoved keeps this view's
+        // tracking area entry warm in AppKit's dispatch tables.
+        override func mouseEntered(with event: NSEvent) {
+            // no-op: intentionally empty to keep the tracking area alive
+        }
+
+        override func mouseMoved(with event: NSEvent) {
+            // no-op: intentionally empty to keep the tracking area alive
         }
 
         // Return nil so this overlay never captures hit-tests — clicks,
@@ -95,3 +125,57 @@ extension View {
         self.overlay(ScrollWheelForwarder())
     }
 }
+
+// MARK: - NativeScrollView
+
+/// A vertically scrolling SwiftUI container backed by a native Cocoa `NSScrollView`
+/// to completely bypass SwiftUI's buggy, dormant-prone gesture router on macOS.
+struct NativeScrollView<Content: View>: NSViewRepresentable {
+    let content: Content
+    
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+    
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSScrollView()
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.drawsBackground = false
+        
+        let clipView = FlippedClipView()
+        clipView.drawsBackground = false
+        scrollView.contentView = clipView
+        
+        let hostingView = NSHostingView(rootView: content)
+        hostingView.translatesAutoresizingMaskIntoConstraints = false
+        hostingView.setContentCompressionResistancePriority(.required, for: .vertical)
+        hostingView.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        
+        scrollView.documentView = hostingView
+        
+        NSLayoutConstraint.activate([
+            hostingView.topAnchor.constraint(equalTo: clipView.topAnchor),
+            hostingView.leadingAnchor.constraint(equalTo: clipView.leadingAnchor),
+            hostingView.trailingAnchor.constraint(equalTo: clipView.trailingAnchor),
+            hostingView.widthAnchor.constraint(equalTo: clipView.widthAnchor),
+            hostingView.bottomAnchor.constraint(greaterThanOrEqualTo: clipView.bottomAnchor)
+        ])
+        
+        return scrollView
+    }
+    
+    func updateNSView(_ nsView: NSScrollView, context: Context) {
+        if let hostingView = nsView.documentView as? NSHostingView<Content> {
+            hostingView.rootView = content
+            hostingView.invalidateIntrinsicContentSize()
+        }
+    }
+}
+
+/// A flipped custom clip view so vertical scrolling starts from the top on macOS.
+final class FlippedClipView: NSClipView {
+    override var isFlipped: Bool { true }
+}
+

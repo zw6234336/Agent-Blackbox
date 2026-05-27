@@ -67,7 +67,7 @@ final class FileMonitorService: ObservableObject {
 
         FSEventStreamSetDispatchQueue(eventStream, DispatchQueue.main)
         isMonitoring = FSEventStreamStart(eventStream)
-        Logger.shared.info("开始监控: \(monitoredPaths.joined(separator: ", "))")
+        Logger.shared.info("开始监控: \(monitoredPaths.count) 个目录")
         
         Task(priority: .background) {
             let patterns = filePatterns

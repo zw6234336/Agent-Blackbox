@@ -599,7 +599,7 @@ final class PlanDetectionService: ObservableObject {
 
         // 判定为 Z.AI 的条件（任一即可）
         if baseIsZAI || anyModelGLM || tokenLooksLikeZAI {
-            Logger.shared.info("Claude Code 检测: 实际后端为 Z.AI (baseURL=\(baseURL), models=\(modelHints), zaiKey=\(tokenLooksLikeZAI))")
+            Logger.shared.info("Claude Code 检测: 实际后端为 Z.AI (baseURL=\(Self.sanitizeURL(baseURL)), models=\(modelHints), zaiKey=\(tokenLooksLikeZAI))")
             return DetectedPlan(
                 provider: .zhipu,
                 planName: "Z.AI Coding Plan (经 Claude Code)",
@@ -645,7 +645,7 @@ final class PlanDetectionService: ObservableObject {
         // 既不像 Z.AI 也不像 Anthropic、又是非官方 base URL → 标为"未知后端"，不臆测配额
         Logger.shared.info("Claude Code 检测: 无法识别后端 (baseURL=\(Self.sanitizeURL(baseURL)))，标为未知")
         return DetectedPlan(
-            provider: .anthropic,
+            provider: .custom,
             planName: "Claude Code (未知后端: \(Self.sanitizeURL(baseURL)))",
             rateLimit: ProviderRateLimit(),
             source: "Claude Code 配置",
@@ -749,7 +749,7 @@ final class PlanDetectionService: ObservableObject {
     }
 
     /// URL 脱敏：移除 userinfo（user:password@）部分
-    private static func sanitizeURL(_ urlStr: String) -> String {
+    static func sanitizeURL(_ urlStr: String) -> String {
         guard var components = URLComponents(string: urlStr) else { return urlStr }
         if components.user != nil || components.password != nil {
             components.user = nil

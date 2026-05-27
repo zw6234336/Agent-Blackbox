@@ -1,4 +1,6 @@
 import SwiftUI
+import UniformTypeIdentifiers
+
 
 struct LogDetailView: View {
     let log: ParsedLog
@@ -28,9 +30,28 @@ struct LogDetailView: View {
                     LogContentSectionView(title: "Prompt", content: prompt, icon: "text.bubble", color: .infoBlue)
                 }
 
-                // Response
+                // Response with thinking extraction
                 if let response = log.response {
-                    LogContentSectionView(title: "Response", content: response, icon: "text.bubble.fill", color: .successGreen)
+                    let parsed = parseThinkingAndResponse(text: response)
+                    
+                    if let thinking = parsed.thinking {
+                        LogContentSectionView(
+                            title: "AI 深度思考过程 (Thinking)",
+                            content: thinking,
+                            icon: "brain",
+                            color: .orange,
+                            isCollapsible: true
+                        )
+                    }
+                    
+                    if !parsed.cleanResponse.isEmpty {
+                        LogContentSectionView(
+                            title: "Response / 输出",
+                            content: parsed.cleanResponse,
+                            icon: "text.bubble.fill",
+                            color: .successGreen
+                        )
+                    }
                 }
 
                 // Error
@@ -128,8 +149,18 @@ struct LogDetailView: View {
                 } label: {
                     Image(systemName: "folder.badge.plus")
                         .font(.title3)
+                        .foregroundStyle(.secondary)
                 }
+                .menuStyle(.borderlessButton)
                 .help("添加到收藏夹")
+
+                Button(action: exportMarkdownReport) {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("导出 AI 编程思维复盘报告 (.md)")
 
                 if isModal {
                     Button(action: {
@@ -205,16 +236,34 @@ struct LogDetailView: View {
         let content: String
         let icon: String
         let color: Color
+        var isCollapsible: Bool = false
         
+        @State private var isCollapsed: Bool = true
         @State private var isCopied = false
         
         var body: some View {
             GroupBox {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
-                        Label(title, systemImage: icon)
-                            .font(.headline)
-                            .foregroundStyle(color)
+                        HStack(spacing: 6) {
+                            Label(title, systemImage: icon)
+                                .font(.headline)
+                                .foregroundStyle(color)
+                            
+                            if isCollapsible {
+                                Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            if isCollapsible {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    isCollapsed.toggle()
+                                }
+                            }
+                        }
                         
                         Spacer()
                         
@@ -244,12 +293,27 @@ struct LogDetailView: View {
                         .help("复制")
                     }
                     
-                    Text(content)
-                        .font(.system(.body, design: .monospaced))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(8)
-                        .background(Color.primary.opacity(0.03))
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                    if !isCollapsible || !isCollapsed {
+                        Text(content)
+                            .font(.system(.body, design: .monospaced))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(8)
+                            .background(Color.primary.opacity(0.03))
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                    } else {
+                        Text("点击展开查看 \(content.count) 字符的完整内容...")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .padding(.vertical, 4)
+                            .padding(.horizontal, 8)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    isCollapsed = false
+                                }
+                            }
+                    }
                 }
             }
         }
@@ -327,6 +391,135 @@ struct LogDetailView: View {
             }
         }
     }
+
+    private func parseThinkingAndResponse(text: String) -> (thinking: String?, cleanResponse: String) {
+        if text.contains("<think>") {
+            let parts = text.components(separatedBy: "<think>")
+            if parts.count > 1 {
+                let subParts = parts[1].components(separatedBy: "</think>")
+                let thinking = subParts[0].trimmingCharacters(in: .whitespacesAndNewlines)
+                let remaining = subParts.dropFirst().joined(separator: "</think>").trimmingCharacters(in: .whitespacesAndNewlines)
+                let cleanResponse: String
+                let prefix = parts[0].trimmingCharacters(in: .whitespacesAndNewlines)
+                if !prefix.isEmpty {
+                    cleanResponse = prefix + "\n\n" + remaining
+                } else {
+                    cleanResponse = remaining
+                }
+                return (thinking.isEmpty ? nil : thinking, cleanResponse)
+            }
+        }
+        
+        if text.contains("[Thinking]") || text.contains("[thinking]") {
+            let keyword = text.contains("[Thinking]") ? "[Thinking]" : "[thinking]"
+            let parts = text.components(separatedBy: keyword)
+            if parts.count > 1 {
+                let nextPart = parts[1]
+                let responseKeyword = nextPart.contains("[Response]") ? "[Response]" : (nextPart.contains("[response]") ? "[response]" : nil)
+                if let respKeyword = responseKeyword {
+                    let subParts = nextPart.components(separatedBy: respKeyword)
+                    let thinking = subParts[0].trimmingCharacters(in: .whitespacesAndNewlines)
+                    let remaining = subParts.dropFirst().joined(separator: respKeyword).trimmingCharacters(in: .whitespacesAndNewlines)
+                    let prefix = parts[0].trimmingCharacters(in: .whitespacesAndNewlines)
+                    let cleanResponse = prefix.isEmpty ? remaining : (prefix + "\n\n" + remaining)
+                    return (thinking.isEmpty ? nil : thinking, cleanResponse)
+                } else {
+                    let clean = text.replacingOccurrences(of: keyword, with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+                    return (clean.isEmpty ? nil : clean, "")
+                }
+            }
+        }
+        
+        return (nil, text)
+    }
+
+    private func exportMarkdownReport() {
+        let savePanel = NSSavePanel()
+        if let markdownType = UTType(filenameExtension: "md") {
+            savePanel.allowedContentTypes = [markdownType]
+        } else {
+            savePanel.allowedContentTypes = [.plainText]
+        }
+        savePanel.nameFieldStringValue = "AI-Report-\(log.modelName ?? "Model")-\(log.timestamp.formattedFileSuffix).md"
+        savePanel.title = "导出 AI 编程思维复盘报告"
+        savePanel.message = "请选择报告的保存位置"
+        
+        savePanel.begin { result in
+            if result == .OK, let url = savePanel.url {
+                let markdownContent = generateMarkdownReport()
+                do {
+                    try markdownContent.write(to: url, atomically: true, encoding: .utf8)
+                } catch {
+                    // Log error
+                }
+            }
+        }
+    }
+    
+    private func generateMarkdownReport() -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .medium
+        
+        let parsed = parseThinkingAndResponse(text: log.response ?? "")
+        
+        var report = """
+        # AI 编程思维复盘报告
+        
+        本报告由 **Agent-Blackbox** 自动生成，为您提取了 LLM 与机器对话中的核心思考过程与交互。
+        
+        ---
+        
+        ## 📊 基本元数据
+        - **调用时间**: \(formatter.string(from: log.timestamp))
+        - **大模型名称**: `\(log.modelName ?? "Unknown Model")`
+        - **服务提供商**: \(log.provider?.displayName ?? "N/A")
+        - **耗时**: \(log.duration.map { String(format: "%.2f 秒", $0) } ?? "N/A")
+        - **Token 消耗**: 输入 `\(log.promptTokens ?? 0)` | 输出 `\(log.completionTokens ?? 0)` | 总计 `\(log.totalTokens ?? 0)`
+        - **请求源文件/场景**: `\(log.sourceFile)`
+        
+        ---
+        
+        """
+        
+        if let prompt = log.prompt {
+            report += """
+            ## 📥 用户输入 (Prompt)
+            ```text
+            \(prompt)
+            ```
+            
+            ---
+            
+            """
+        }
+        
+        if let thinking = parsed.thinking {
+            report += """
+            ## 💡 AI 深度思考轨迹 (Thinking Process)
+            > **提示**：以下是拦截并提取到的 AI 思维链，展现了模型在给出最终代码或回答前的内部逻辑演练、步骤分解与安全研判。
+            
+            ```text
+            \(thinking)
+            ```
+            
+            ---
+            
+            """
+        }
+        
+        if !parsed.cleanResponse.isEmpty {
+            report += """
+            ## 📤 最终生成输出 (Response)
+            
+            \(parsed.cleanResponse)
+            
+            """
+        }
+        
+        report += "\n---\n*报告生成工具：Agent-Blackbox — 为开发者保留最有价值的 AI 对话与思考足迹。*\n"
+        return report
+    }
 }
 
 // MARK: - Flow Layout
@@ -368,5 +561,15 @@ struct FlowLayout: Layout {
         }
         
         return (CGSize(width: maxWidth, height: maxHeight), positions)
+    }
+}
+
+// MARK: - Date Extension
+
+extension Date {
+    var formattedFileSuffix: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        return formatter.string(from: self)
     }
 }

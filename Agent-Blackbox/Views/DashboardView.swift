@@ -6,6 +6,15 @@ enum DashboardTimeRange: String, CaseIterable {
     case week = "7天"
     case month = "30天"
     case all = "全部"
+    
+    var dayValue: Int? {
+        switch self {
+        case .today: return 0
+        case .week: return 7
+        case .month: return 30
+        case .all: return nil
+        }
+    }
 }
 
 struct DashboardView: View {
@@ -15,6 +24,7 @@ struct DashboardView: View {
 
     @AppStorage("dashboardTimeRange") private var timeRange: DashboardTimeRange = .today
     @State private var isRefreshing = false
+    @State private var showPosterSheet = false
 
     enum DistributionViewMode: String, CaseIterable, Identifiable {
         case donut = "饼图"
@@ -28,7 +38,7 @@ struct DashboardView: View {
     var stats: DashboardStats { database.dashboardStats }
 
     var body: some View {
-        ScrollView {
+        ScrollView(.vertical, showsIndicators: true) {
             // 外层主 ScrollView：看板整体滚动容器
             VStack(spacing: 20) {
                 // Header with refresh
@@ -62,10 +72,14 @@ struct DashboardView: View {
         .scrollWheelKeepAlive()
         .background(Color.dashboardBackground)
         .task {
-            database.refreshDashboardStats(days: daysForRange(timeRange))
+            database.refreshDashboardStats(days: timeRange.dayValue)
         }
         .onChange(of: timeRange) { oldValue, newValue in
-            database.refreshDashboardStats(days: daysForRange(newValue))
+            database.refreshDashboardStats(days: newValue.dayValue)
+        }
+        .sheet(isPresented: $showPosterSheet) {
+            SharePosterView()
+                .environmentObject(database)
         }
     }
 
@@ -95,7 +109,7 @@ struct DashboardView: View {
                 withAnimation(.easeInOut(duration: 0.3)) {
                     isRefreshing = true
                 }
-                database.refreshDashboardStats(days: daysForRange(timeRange))
+                database.refreshDashboardStats(days: timeRange.dayValue)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                     withAnimation { isRefreshing = false }
                 }
@@ -105,6 +119,15 @@ struct DashboardView: View {
                     .rotationEffect(.degrees(isRefreshing ? 360 : 0))
             }
             .buttonStyle(.plain)
+            
+            Spacer().frame(width: 8)
+            
+            Button(action: { showPosterSheet = true }) {
+                Image(systemName: "square.and.arrow.up")
+                    .font(.title3)
+            }
+            .buttonStyle(.plain)
+            .help("生成并分享用量海报")
         }
     }
 
@@ -382,7 +405,7 @@ struct DashboardView: View {
 
     private func colorForModel(_ modelName: String) -> Color {
         let lower = modelName.lowercased()
-        if lower.contains("gpt-4") || lower.contains("gpt-3") {
+        if lower.contains("gpt-4") || lower.contains("gpt-3") || lower.contains("gpt-") || lower.hasPrefix("o1") || lower.hasPrefix("o3") {
             return Color(red: 0.1, green: 0.65, blue: 0.45) // 翡翠绿 (OpenAI)
         } else if lower.contains("claude") || lower.contains("anthropic") {
             return Color(red: 0.95, green: 0.45, blue: 0.2) // 珊瑚橙 (Anthropic)
@@ -392,7 +415,9 @@ struct DashboardView: View {
             return Color(red: 0.12, green: 0.45, blue: 0.9) // 科技蓝 (DeepSeek)
         } else if lower.contains("llama") || lower.contains("ollama") {
             return Color(red: 0.85, green: 0.65, blue: 0.1) // 金黄色 (Llama)
-        } else if lower.contains("qwen") || lower.contains("tongyi") {
+        } else if lower.contains("glm") || lower.contains("zhipu") || lower.contains("chatglm") {
+            return Color(red: 0.0, green: 0.62, blue: 0.86) // 青蓝色 (智谱清言 GLM)
+        } else if lower.contains("qwen") || lower.contains("tongyi") || lower.contains("aliyun") {
             return Color(red: 0.35, green: 0.25, blue: 0.85) // 智海蓝 (阿里通义千问)
         } else if lower.contains("kimi") || lower.contains("moonshot") {
             return Color(red: 0.9, green: 0.3, blue: 0.15) // 橙红色 (Moonshot Kimi)
@@ -400,6 +425,12 @@ struct DashboardView: View {
             return Color(red: 0.0, green: 0.5, blue: 1.0) // 字节蓝色 (豆包)
         } else if lower.contains("minimax") {
             return Color(red: 0.8, green: 0.1, blue: 0.4) // 紫红色 (MiniMax)
+        } else if lower.contains("grok") || lower.contains("xai") {
+            return Color(red: 0.45, green: 0.45, blue: 0.45) // 白灰色/玄铁黑 (xAI Grok)
+        } else if lower.contains("ernie") || lower.contains("wenxin") || lower.contains("yiyan") {
+            return Color(red: 0.05, green: 0.4, blue: 0.9) // 百度科技蓝 (文心一言)
+        } else if lower.contains("baichuan") {
+            return Color(red: 0.85, green: 0.15, blue: 0.15) // 红橙色 (百川)
         } else if lower == "other" || lower == "其它" || lower == "其他" {
             return Color.secondary
         } else {
@@ -869,6 +900,35 @@ struct DashboardView: View {
                         LiveFeedRow(log: log) {
                             NotificationCenter.default.post(name: Notification.Name("ShowLogDetailSheet"), object: log)
                         }
+                        .contextMenu {
+                            Button {
+                                if let prompt = log.prompt {
+                                    NSPasteboard.general.clearContents()
+                                    NSPasteboard.general.setString(prompt, forType: .string)
+                                }
+                            } label: {
+                                Label("复制 Prompt / 输入", systemImage: "doc.on.doc")
+                            }
+                            .disabled(log.prompt == nil)
+
+                            Button {
+                                if let response = log.response {
+                                    NSPasteboard.general.clearContents()
+                                    NSPasteboard.general.setString(response, forType: .string)
+                                }
+                            } label: {
+                                Label("复制 Response / 输出", systemImage: "doc.on.doc.fill")
+                            }
+                            .disabled(log.response == nil)
+
+                            Divider()
+
+                            Button {
+                                Task { await database.toggleBookmark(logId: log.id) }
+                            } label: {
+                                Label(log.isBookmarked ? "取消收藏" : "加入收藏", systemImage: log.isBookmarked ? "star.slash" : "star")
+                            }
+                        }
                     }
                 }
                 .padding(.bottom, 4)
@@ -894,14 +954,7 @@ struct DashboardView: View {
         .frame(maxWidth: .infinity, minHeight: 120)
     }
 
-    private func daysForRange(_ range: DashboardTimeRange) -> Int? {
-        switch range {
-        case .today: return 0
-        case .week: return 7
-        case .month: return 30
-        case .all: return nil
-        }
-    }
+
 }
 
 // MARK: - Supporting Views

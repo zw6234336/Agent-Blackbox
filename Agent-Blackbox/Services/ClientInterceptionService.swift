@@ -246,6 +246,9 @@ final class ClientInterceptionService: ObservableObject {
         Logger.shared.info("自动接管: 已恢复 \(client.displayName) 原始配置并删除备份")
     }
     
+    // ⚠️ 安全注意：此处读取用户真实 Z.AI API Key（明文）。
+    // 禁止在任何日志中打印此函数的返回值，禁止将其写入 app.log 或 Console。
+    // 该 Key 仅用于写入 Pi 的本地配置文件以实现代理拦截，不离开用户本机。
     private func getZaiAuthKey() -> String? {
         let authURL = NSHomeDirectory() + "/.pi/agent/auth.json"
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: authURL)),

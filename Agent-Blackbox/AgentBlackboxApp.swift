@@ -29,15 +29,38 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // events even after long periods without user interaction. This is a
         // developer/monitoring tool that is expected to keep refreshing
         // dashboards in the background, so suspension is undesirable.
+        // Use both .userInitiated and .idleSystemSleepDisabled to maximise
+        // the chance that macOS keeps our run loop responsive.
         appNapActivity = ProcessInfo.processInfo.beginActivity(
-            options: [.userInitiated],
+            options: [.userInitiated, .idleSystemSleepDisabled],
             reason: "Agent Blackbox keeps proxy gateway and dashboards responsive"
         )
 
-        // Install a no-op local monitor for scroll/mouse-moved events.
-        // The mere presence of the monitor keeps the event dispatcher
-        // hot and prevents the "scroll stops working after idle" bug.
+        // Install a smart local monitor for scroll-wheel events.
+        // SwiftUI on macOS has a bug where after the app is idle or focus changes,
+        // it stops dispatching scroll events to ScrollViews.
+        // By intercepting scroll-wheel events globally, hit-testing to find the view
+        // under the cursor, walking up to find its NSScrollView, and forwarding the
+        // event directly, we bypass SwiftUI's buggy event router completely.
         scrollWheelMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { event in
+            guard let window = event.window,
+                  let contentView = window.contentView else {
+                return event
+            }
+            
+            // contentView.hitTest expects a point in its superview's coordinate system.
+            // Since contentView is the root view of the window, its superview's coordinate
+            // system is the window's coordinate system. Therefore, we pass locationInWindow directly.
+            if let hitView = contentView.hitTest(event.locationInWindow) {
+                var candidate: NSView? = hitView
+                while let view = candidate {
+                    if let scrollView = view as? NSScrollView {
+                        scrollView.scrollWheel(with: event)
+                        return nil // Consume event to prevent SwiftUI's buggy dispatcher from ignoring/swallowing it
+                    }
+                    candidate = view.superview
+                }
+            }
             return event
         }
         mouseMovedMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .mouseEntered, .mouseExited]) { event in
@@ -48,23 +71,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // SwiftUI's internal scroll-wheel handler "hot".  Without this,
         // the handler can go dormant after long idle, ignoring real
         // scroll-wheel events until the user clicks inside the window.
-        // The event is invisible (deltaY = 0) and only fires every 30 s.
-        scrollKeepAliveTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
-            guard self != nil,
-                  let window = NSApp.mainWindow,
-                  window.isVisible,
-                  NSApp.isActive else { return }
-            // Create a zero-delta scroll event — no visible effect.
-            if let cgEvent = CGEvent(scrollWheelEvent2Source: nil,
-                                     units: .pixel,
-                                     wheelCount: 1,
-                                     wheel1: 0, wheel2: 0, wheel3: 0) {
-                cgEvent.setIntegerValueField(.scrollWheelEventDeltaAxis1, value: 0)
-                let nsEvent = NSEvent(cgEvent: cgEvent)
-                if let nsEvent = nsEvent {
-                    window.sendEvent(nsEvent)
-                }
-            }
+        // The event is invisible (deltaY = 0) and fires every 15 s.
+        //
+        // IMPORTANT: We intentionally do NOT gate this on `NSApp.isActive`.
+        // The previous code skipped the synthetic event when the app was
+        // inactive, which meant that after an overnight idle the scroll
+        // dispatcher was completely dormant by the time the user returned.
+        // Sending the event even while inactive keeps the dispatch path
+        // registered in the run loop.
+        scrollKeepAliveTimer = Timer.scheduledTimer(withTimeInterval: 15.0, repeats: true) { [weak self] _ in
+            self?.sendSyntheticScrollEvent()
+        }
+        // Make sure the timer fires even when tracking menus / modal panels.
+        if let timer = scrollKeepAliveTimer {
+            RunLoop.main.add(timer, forMode: .common)
         }
 
         // Force the app to become the active foreground application.
@@ -82,6 +102,43 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.windows
                 .first { $0.canBecomeKey && $0.title == "Agent Blackbox" }?
                 .makeKeyAndOrderFront(nil)
+        }
+    }
+
+    // MARK: - Scroll Wake-Up on App Activation
+
+    /// Called every time the app transitions from inactive/background to
+    /// active foreground.  This is the critical moment after an overnight
+    /// idle: SwiftUI's scroll-wheel dispatcher is dormant, so we send a
+    /// rapid burst of synthetic scroll events to force it back to life.
+    func applicationDidBecomeActive(_ notification: Notification) {
+        // Send a burst of 3 synthetic scroll events spaced 50 ms apart.
+        // A single event sometimes isn't enough to re-register the dispatch
+        // path if SwiftUI has been dormant for many hours.
+        for i in 0..<3 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) * 0.05) { [weak self] in
+                self?.sendSyntheticScrollEvent()
+            }
+        }
+    }
+
+    // MARK: - Synthetic Scroll Event
+
+    /// Sends a zero-delta scroll event to all visible windows.  The event
+    /// has no visual effect but keeps SwiftUI's internal scroll-wheel
+    /// handler registered in the run loop.
+    private func sendSyntheticScrollEvent() {
+        guard let cgEvent = CGEvent(scrollWheelEvent2Source: nil,
+                                     units: .pixel,
+                                     wheelCount: 1,
+                                     wheel1: 0, wheel2: 0, wheel3: 0) else { return }
+        cgEvent.setIntegerValueField(.scrollWheelEventDeltaAxis1, value: 0)
+        guard let nsEvent = NSEvent(cgEvent: cgEvent) else { return }
+
+        // Send to ALL visible windows, not just mainWindow.
+        // After idle, the mainWindow reference might be stale or nil.
+        for window in NSApp.windows where window.isVisible {
+            window.sendEvent(nsEvent)
         }
     }
 

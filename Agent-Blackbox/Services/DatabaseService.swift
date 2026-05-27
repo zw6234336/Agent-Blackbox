@@ -11,6 +11,7 @@ final class DatabaseService: ObservableObject {
     @Published var dashboardStats: DashboardStats = DashboardStats()
     private var lastDashboardDays: Int? = 0
     private let dbQueue = DispatchQueue(label: "com.agent.blackbox.database", qos: .userInitiated)
+    private var refreshTask: Task<Void, Never>?
 
     nonisolated(unsafe) private var db: Connection?
 
@@ -202,7 +203,7 @@ final class DatabaseService: ObservableObject {
                     self.totalLogCount += 1
                     if let err = log.errorMessage, !err.isEmpty { self.errorLogCount += 1 }
                     if log.isBookmarked { self.bookmarkedCount += 1 }
-                    self.refreshDashboardStats()
+                    self.scheduleRefresh()
                 }
             } catch {
                 Logger.shared.error("日志保存失败: \(error.localizedDescription)")
@@ -250,7 +251,7 @@ final class DatabaseService: ObservableObject {
                 if insertedCount > 0 {
                     Task { @MainActor in
                         await self.reloadLogs()
-                        self.refreshDashboardStats()
+                        self.scheduleRefresh()
                     }
                 }
             } catch {
@@ -550,6 +551,15 @@ final class DatabaseService: ObservableObject {
 
     // MARK: - Dashboard Statistics
 
+    func scheduleRefresh(days: Int? = nil) {
+        refreshTask?.cancel()
+        refreshTask = Task {
+            try? await Task.sleep(for: .milliseconds(200))
+            guard !Task.isCancelled else { return }
+            self.refreshDashboardStats(days: days)
+        }
+    }
+
     func refreshDashboardStats(days: Int? = nil) {
         guard let dbConnection = self.db else { return }
 
@@ -634,11 +644,13 @@ final class DatabaseService: ObservableObject {
 
                 // Calls by model
                 var modelQuery = "SELECT model_name, COUNT(*) as cnt FROM logs WHERE model_name IS NOT NULL "
+                var modelBindings: [Binding] = []
                 if let start = startTimestamp {
-                    modelQuery += "AND timestamp >= \(start) "
+                    modelQuery += "AND timestamp >= ? "
+                    modelBindings.append(start)
                 }
                 modelQuery += "GROUP BY model_name ORDER BY cnt DESC LIMIT 20"
-                for row in try dbConnection.prepare(modelQuery) {
+                for row in try dbConnection.prepare(modelQuery, modelBindings) {
                     if let mName = row[0] as? String, let count = row[1] as? Int64 {
                         stats.callsByModel[mName] = Int(count)
                     }
@@ -658,7 +670,7 @@ final class DatabaseService: ObservableObject {
                                COALESCE(SUM(prompt_tokens), 0) as pt,
                                COALESCE(SUM(completion_tokens), 0) as ct
                         FROM logs
-                        WHERE timestamp >= \(limitVal)
+                        WHERE timestamp >= ?
                         GROUP BY hour_bucket
                         ORDER BY hour_bucket ASC
                     """
@@ -668,7 +680,7 @@ final class DatabaseService: ObservableObject {
                                COALESCE(SUM(prompt_tokens), 0) as pt,
                                COALESCE(SUM(completion_tokens), 0) as ct
                         FROM logs
-                        WHERE timestamp >= \(limitVal) AND model_name IS NOT NULL AND model_name != ''
+                        WHERE timestamp >= ? AND model_name IS NOT NULL AND model_name != ''
                         GROUP BY hour_bucket, model_name
                         ORDER BY hour_bucket ASC
                     """
@@ -680,7 +692,7 @@ final class DatabaseService: ObservableObject {
                                COALESCE(SUM(prompt_tokens), 0) as pt,
                                COALESCE(SUM(completion_tokens), 0) as ct
                         FROM logs
-                        WHERE timestamp >= \(limitVal)
+                        WHERE timestamp >= ?
                         GROUP BY day_bucket
                         ORDER BY day_bucket ASC
                     """
@@ -690,14 +702,14 @@ final class DatabaseService: ObservableObject {
                                COALESCE(SUM(prompt_tokens), 0) as pt,
                                COALESCE(SUM(completion_tokens), 0) as ct
                         FROM logs
-                        WHERE timestamp >= \(limitVal) AND model_name IS NOT NULL AND model_name != ''
+                        WHERE timestamp >= ? AND model_name IS NOT NULL AND model_name != ''
                         GROUP BY day_bucket, model_name
                         ORDER BY day_bucket ASC
                     """
                     formatter.dateFormat = "yyyy-MM-dd"
                 }
                 
-                for row in try dbConnection.prepare(dayQuery) {
+                for row in try dbConnection.prepare(dayQuery, [limitVal]) {
                     if let bucketStr = row[0] as? String,
                        let pt = row[1] as? Int64,
                        let ct = row[2] as? Int64 {
@@ -721,7 +733,7 @@ final class DatabaseService: ObservableObject {
                 var rawPoints: [RawModelTokenPoint] = []
                 var modelTotalTokens: [String: Int] = [:]
 
-                for row in try dbConnection.prepare(modelDayQuery) {
+                for row in try dbConnection.prepare(modelDayQuery, [limitVal]) {
                     if let bucketStr = row[0] as? String,
                        let mName = row[1] as? String,
                        let pt = row[2] as? Int64,
@@ -847,11 +859,13 @@ final class DatabaseService: ObservableObject {
                     }
                     var agg = UsageAggregate()
                     agg.requestCount = try dbConnection.scalar(q.count)
-                    agg.totalTokens = try dbConnection.scalar(q.select(self.totalTokens.sum)) ?? 0
-                    if agg.totalTokens == 0 {
+                    let totalSum = try dbConnection.scalar(q.select(self.totalTokens.sum))
+                    if totalSum == nil || totalSum == 0 {
                         let pt = try dbConnection.scalar(q.select(self.promptTokens.sum)) ?? 0
                         let ct = try dbConnection.scalar(q.select(self.completionTokens.sum)) ?? 0
                         agg.totalTokens = pt + ct
+                    } else {
+                        agg.totalTokens = totalSum ?? 0
                     }
                     agg.avgDuration = try dbConnection.scalar(q.select(self.duration.average)) ?? 0.0
                     continuation.resume(returning: agg)
@@ -1043,7 +1057,7 @@ final class DatabaseService: ObservableObject {
                                 'rope_freq_base','rope_freq_scale','filenotfounderror','valueerror',
                                 'typeerror','runtimeerror','indexerror','keyerror','modulenotfounderror',
                                 'permissionerror','true','false','none','null','openaichatmodel.builder')
-                            OR model_name GLOB '[0-9]*.[0-9]*'
+                            OR (model_name GLOB '[0-9]*\\.[0-9]*' AND model_name NOT GLOB '*[^0-9.]*')
                           )
                     """
                     try db.run(blocklistSQL)

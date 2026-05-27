@@ -47,6 +47,42 @@ struct LogListView: View {
                         Task { await database.toggleBookmark(logId: log.id) }
                     }
                     .tag(log.id)
+                    .contextMenu {
+                        Button {
+                            if let prompt = log.prompt {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(prompt, forType: .string)
+                            }
+                        } label: {
+                            Label("复制 Prompt / 输入", systemImage: "doc.on.doc")
+                        }
+                        .disabled(log.prompt == nil)
+
+                        Button {
+                            if let response = log.response {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(response, forType: .string)
+                            }
+                        } label: {
+                            Label("复制 Response / 输出", systemImage: "doc.on.doc.fill")
+                        }
+                        .disabled(log.response == nil)
+
+                        Divider()
+
+                        Button {
+                            Task { await database.toggleBookmark(logId: log.id) }
+                        } label: {
+                            Label(log.isBookmarked ? "取消收藏" : "加入收藏", systemImage: log.isBookmarked ? "star.slash" : "star")
+                        }
+
+                        Button {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(log.id.uuidString, forType: .string)
+                        } label: {
+                            Label("复制日志 ID", systemImage: "personalhotspot.key")
+                        }
+                    }
                 }
                 .searchable(text: $searchText, prompt: "搜索日志...")
             }

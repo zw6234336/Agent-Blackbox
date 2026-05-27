@@ -29,8 +29,11 @@ final class ProxyDashboardViewModel: ObservableObject {
     @Published private(set) var hasPendingRequests = false
     @Published private(set) var runawayClient: String? = nil
 
-    private let clients = ["pi", "cline", "claude-code", "cursor", "copilot", "other"]
-    private let knownChartClients = Set(["pi", "cline", "claude-code", "cursor", "copilot"])
+    static let chartClients = ["pi", "cline", "claude-code", "cursor", "copilot", "other"]
+    static let knownChartClientsSet = Set(["pi", "cline", "claude-code", "cursor", "copilot"])
+
+    private var clients: [String] { Self.chartClients }
+    private var knownChartClients: Set<String> { Self.knownChartClientsSet }
     private var allRequests: [ProxyRequestLog] = []
     private var lastProcessedTime = Date()
     private var lastSearchText = ""
@@ -62,6 +65,9 @@ final class ProxyDashboardViewModel: ObservableObject {
             resetChart()
             initializeChartData(from: requests)
         }
+
+        // 通知 chart loop 有新数据
+        markChartDirty()
     }
 
     func updateSearchText(_ value: String) {
@@ -88,12 +94,21 @@ final class ProxyDashboardViewModel: ObservableObject {
         }
     }
 
+    private var chartDirty = false
+
     func startChartLoop() async {
         initializeChartData(from: allRequests)
         while !Task.isCancelled {
             try? await Task.sleep(for: .seconds(3))
+            // 仅在有新请求时才更新图表，避免无意义的 @Published 触发
+            guard chartDirty || !allRequests.isEmpty else { continue }
+            chartDirty = false
             appendNewChartPoint(from: allRequests)
         }
+    }
+
+    func markChartDirty() {
+        chartDirty = true
     }
 
     func formatRelativeTime(_ date: Date) -> String {
@@ -182,6 +197,9 @@ final class ProxyDashboardViewModel: ObservableObject {
         let lastReqTime = requests.first?.timestamp ?? Date.distantPast
         let timeSinceLastReq = currentTime.timeIntervalSince(lastReqTime)
 
+        // Recalculate runaway client status periodically to clear warning on idle
+        runawayClient = computeRunawayClient(from: requests)
+
         if timeSinceLastReq > 30.0 && !requests.isEmpty {
             isChartFrozen = true
             return
@@ -261,23 +279,24 @@ struct ProxyDashboardView: View {
     
     var body: some View {
         HStack(spacing: 16) {
-            // Left Column: Main Dashboard
-            VStack(spacing: 16) {
-                headerSection
-                
-                // Network Wave pulse
-                PulseWaveView(isActive: viewModel.hasPendingRequests)
-                    .frame(height: 24)
-                    .background(Color.primary.opacity(0.02))
-                    .cornerRadius(6)
-                    .padding(.horizontal, 4)
-                
-                metricsAndInterceptionRow
-                tokenRealTimeChartSection
-                // gitSection
-                liveRequestsList
+            // Left Column: Main Dashboard — 用 NativeScrollView 包裹整个左列
+            NativeScrollView {
+                VStack(spacing: 16) {
+                    headerSection
+                    
+                    // Network Wave pulse
+                    PulseWaveView(isActive: viewModel.hasPendingRequests)
+                        .frame(height: 24)
+                        .background(Color.primary.opacity(0.02))
+                        .cornerRadius(6)
+                        .padding(.horizontal, 4)
+                    
+                    metricsAndInterceptionRow
+                    tokenRealTimeChartSection
+                    liveRequestsList
+                }
+                .frame(maxWidth: .infinity)
             }
-            .frame(maxWidth: .infinity)
             
             // Right Column: Details Inspector
             if let request = viewModel.selectedRequest {
@@ -707,31 +726,75 @@ struct ProxyDashboardView: View {
             }
             
             if viewModel.filteredRequests.isEmpty {
-                VStack(spacing: 8) {
-                    Spacer()
-                    Image(systemName: "network")
-                        .font(.largeTitle)
-                        .foregroundStyle(.tertiary)
-                    Text(viewModel.isEmptyBecauseNoRequests ? "暂无代理调用流水" : "无匹配筛选条件的流水")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                    Text("请在 AI 客户端中将 Base URL 配置为本机网关后进行对话。")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                    Spacer()
+                if viewModel.isEmptyBecauseNoRequests {
+                    OnboardingGuideView()
+                } else {
+                    VStack(spacing: 8) {
+                        Spacer()
+                        Image(systemName: "network")
+                            .font(.largeTitle)
+                            .foregroundStyle(.tertiary)
+                        Text("无匹配筛选条件的流水")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                        Spacer()
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .cardStyle()
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .cardStyle()
             } else {
-                List(selection: $viewModel.selectedRequestId) {
-                    ForEach(viewModel.filteredRequests) { request in
-                        liveRequestRow(for: request)
-                            .tag(request.id)
-                            .listRowSeparator(.hidden)
-                            .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(viewModel.filteredRequests) { request in
+                            liveRequestRow(for: request)
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                                        viewModel.select(request)
+                                        self.replayResult = nil
+                                        self.replayingRequest = false
+                                    }
+                                }
+                                .contextMenu {
+                                    Button {
+                                        replayRequest(request)
+                                    } label: {
+                                        Label("立即进行沙盒重放 (Replay)", systemImage: "play.right.fill")
+                                    }
+                                    .disabled(request.isPending)
+
+                                    Divider()
+
+                                    Button {
+                                        NSPasteboard.general.clearContents()
+                                        NSPasteboard.general.setString(request.path, forType: .string)
+                                    } label: {
+                                        Label("复制请求 Path", systemImage: "link")
+                                    }
+
+                                    Button {
+                                        if let prompt = request.prompt {
+                                            NSPasteboard.general.clearContents()
+                                            NSPasteboard.general.setString(prompt, forType: .string)
+                                        }
+                                    } label: {
+                                        Label("复制 Request Payload", systemImage: "doc.on.doc")
+                                    }
+                                    .disabled(request.prompt == nil)
+
+                                    Button {
+                                        if let response = request.response {
+                                            NSPasteboard.general.clearContents()
+                                            NSPasteboard.general.setString(response, forType: .string)
+                                        }
+                                    } label: {
+                                        Label("复制 Response Body", systemImage: "doc.on.doc.fill")
+                                    }
+                                    .disabled(request.response == nil)
+                                }
+                        }
                     }
                 }
-                .listStyle(.plain)
                 .background(Color.clear)
             }
         }
@@ -1221,6 +1284,8 @@ struct ProxyDashboardView: View {
             return .kimi
         } else if modelLower.contains("glm") || modelLower.contains("zhipu") {
             return .zhipu
+        } else if modelLower.contains("inflection") || modelLower == "pi" || modelLower.contains("pi-") || modelLower.hasSuffix("-pi") {
+            return .pi
         } else {
             return .custom
         }
@@ -1331,7 +1396,7 @@ struct PulseWaveView: View {
         // A throttled periodic schedule looks identical to the eye while
         // keeping the main run loop responsive.
         if isActive && scenePhase == .active {
-            TimelineView(.periodic(from: Date(), by: 1.0 / 24.0)) { timeline in
+            TimelineView(.periodic(from: Date(), by: 1.0 / 12.0)) { timeline in
                 waveCanvas(date: timeline.date)
             }
         } else {
@@ -1586,3 +1651,151 @@ struct QuickInterceptionControlView: View {
         .cornerRadius(6)
     }
 }
+
+// MARK: - OnboardingGuideView
+
+struct OnboardingGuideView: View {
+    @State private var activeTab = 0
+    @State private var isCopied = false
+    
+    var body: some View {
+        VStack(spacing: 16) {
+            VStack(spacing: 8) {
+                Image(systemName: "network.badge.shield.half.filled")
+                    .font(.system(size: 38))
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [.accentGradientStart, .accentGradientEnd],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                
+                Text("暂无拦截流水，等待接入")
+                    .font(.headline)
+                    .fontWeight(.semibold)
+                
+                Text("本地 AI 代理网关已启动运行中，正在监听端口: 9999")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.top, 10)
+            
+            // 一键复制网关 URL 按钮
+            Button(action: {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString("http://127.0.0.1:9999/v1", forType: .string)
+                isCopied = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    isCopied = false
+                }
+            }) {
+                HStack(spacing: 6) {
+                    Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
+                    Text(isCopied ? "已复制网关 URL" : "一键复制网关地址 (http://127.0.0.1:9999/v1)")
+                }
+                .font(.subheadline)
+                .fontWeight(.medium)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(Color.accentGradientStart.opacity(0.12))
+                .foregroundStyle(Color.accentGradientStart)
+                .cornerRadius(8)
+            }
+            .buttonStyle(.plain)
+            
+            Divider()
+                .padding(.horizontal)
+            
+            VStack(alignment: .leading, spacing: 10) {
+                Text("👉 请选择您的 AI 客户端进行一键接入：")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .padding(.horizontal)
+                
+                Picker("", selection: $activeTab) {
+                    Text("Cursor").tag(0)
+                    Text("Cline / Roo").tag(1)
+                    Text("Claude Code").tag(2)
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal)
+                
+                GroupBox {
+                    Group {
+                        if activeTab == 0 {
+                            guideCursor
+                        } else if activeTab == 1 {
+                            guideCline
+                        } else {
+                            guideClaudeCode
+                        }
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 110, alignment: .leading)
+                    .padding(6)
+                }
+                .padding(.horizontal)
+            }
+            
+            Spacer()
+        }
+        .padding()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(.ultraThinMaterial)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+        )
+    }
+    
+    private var guideCursor: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Cursor 配置指南")
+                .font(.caption)
+                .fontWeight(.bold)
+                .foregroundStyle(.primary)
+            
+            Text("1. 打开 Cursor 设置: 点击右上角齿轮 -> **Settings** -> **Models**。")
+            Text("2. 在 **OpenAI API** 栏目中：点开 Override OpenAI Base URL，填入 `http://127.0.0.1:9999/v1`。")
+            Text("3. 在 API Key 中随意填写任意内容（例如 `sk-placeholder`），开启对应模型即可开始对话。")
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    }
+    
+    private var guideCline: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Cline / Roo Code 配置指南")
+                .font(.caption)
+                .fontWeight(.bold)
+                .foregroundStyle(.primary)
+            
+            Text("1. 打开 VSCode 中的 Cline 侧边栏，点击顶部配置按钮。")
+            Text("2. 将 **API Provider** 切换选择为 **OpenAI Compatible**。")
+            Text("3. 在 **Base URL** 中填入 `http://127.0.0.1:9999/v1`。")
+            Text("4. API Key 可随意填写；在 Model ID 中手动输入您希望拦截的目标模型（如 `deepseek-reasoner` 或 `claude-3-7-sonnet`）。")
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    }
+    
+    private var guideClaudeCode: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Claude Code (CLI) 终端配置指南")
+                .font(.caption)
+                .fontWeight(.bold)
+                .foregroundStyle(.primary)
+            
+            Text("1. 在启动 Claude Code 前，设置终端环境变量：")
+            Text("   `export CLAUDE_BASE_URL=\"http://127.0.0.1:9999\"` 并回车。")
+            Text("2. 接着运行 `claude` 即可自动流经网关。")
+            Text("3. 提示：您可以将此命令写入您的 `~/.zshrc` 或 `~/.bash_profile` 配置文件以长期生效。")
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    }
+}
+

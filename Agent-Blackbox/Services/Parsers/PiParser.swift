@@ -59,6 +59,9 @@ struct PiParser: LogParser {
         let ext = url.pathExtension.lowercased()
 
         if ext == "jsonl" {
+            if content.contains("\"type\":\"session\"") || content.contains("\"type\":\"message\"") {
+                return parsePiAgentSessionLog(url: url, content: content)
+            }
             return parseJSONL(url: url, content: content)
         }
         if ext == "json" {
@@ -70,6 +73,9 @@ struct PiParser: LogParser {
 
         // 尝试按 JSON 解析
         if content.trimmingCharacters(in: .whitespacesAndNewlines).starts(with: "{") {
+            if content.contains("\"type\":\"session\"") || content.contains("\"type\":\"message\"") {
+                return parsePiAgentSessionLog(url: url, content: content)
+            }
             return parseJSON(url: url, content: content)
         }
         if content.trimmingCharacters(in: .whitespacesAndNewlines).starts(with: "[") {
@@ -377,5 +383,117 @@ struct PiParser: LogParser {
             return Double(trimmed.replacingOccurrences(of: "s", with: ""))
         }
         return Double(trimmed)
+    }
+
+    // MARK: - Pi Agent Session Parsing
+
+    /// 解析 Pi Agent (@earendil-works/pi-coding-agent) 的 session JSONL 日志
+    private func parsePiAgentSessionLog(url: URL, content: String) -> [ParsedLog] {
+        let lines = content.components(separatedBy: .newlines)
+        var results: [ParsedLog] = []
+        
+        var conversationId: String?
+        var currentModel: String = "inflection-3-pi"
+        
+        var pendingUserPrompt: String?
+        var pendingTimestamp: Date?
+        
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            
+            guard let data = trimmed.data(using: .utf8),
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let type = obj["type"] as? String else {
+                continue
+            }
+            
+            if type == "session" {
+                conversationId = obj["id"] as? String
+            } else if type == "model_change" {
+                if let modelId = obj["modelId"] as? String {
+                    currentModel = modelId
+                }
+            } else if type == "message" {
+                guard let messageObj = obj["message"] as? [String: Any],
+                      let role = messageObj["role"] as? String else {
+                    continue
+                }
+                
+                let rawContent = messageObj["content"]
+                let msgContent = extractPiAgentContent(rawContent)
+                
+                let timestamp: Date = {
+                    if let tsStr = obj["timestamp"] as? String, let date = parseDate(from: tsStr) {
+                        return date
+                    }
+                    if let tsDouble = messageObj["timestamp"] as? Double {
+                        return tsDouble > 1e12 ? Date(timeIntervalSince1970: tsDouble / 1000.0) : Date(timeIntervalSince1970: tsDouble)
+                    }
+                    return Date()
+                }()
+                
+                if role == "user" {
+                    pendingUserPrompt = maskAPIKey(msgContent)
+                    pendingTimestamp = timestamp
+                } else if role == "assistant" {
+                    let usage = messageObj["usage"] as? [String: Any]
+                    let promptTokens = usage?["input"] as? Int
+                    let completionTokens = usage?["output"] as? Int
+                    let totalTokens = usage?["totalTokens"] as? Int
+                    
+                    let errorMessage = messageObj["errorMessage"] as? String
+                    let provider = detectProvider(model: currentModel, content: nil, sourceFile: url.path)
+                    
+                    results.append(ParsedLog(
+                        timestamp: pendingTimestamp ?? timestamp,
+                        sourceFile: url.path,
+                        provider: provider,
+                        modelName: currentModel,
+                        prompt: pendingUserPrompt,
+                        response: msgContent.isEmpty ? nil : maskAPIKey(msgContent),
+                        promptTokens: promptTokens ?? estimateTokenCount(pendingUserPrompt),
+                        completionTokens: completionTokens ?? estimateTokenCount(msgContent),
+                        totalTokens: totalTokens,
+                        errorMessage: maskAPIKey(errorMessage),
+                        conversationId: conversationId,
+                        metadata: [
+                            "format": "pi_agent_session_log",
+                            "client": "pi"
+                        ]
+                    ))
+                    
+                    pendingUserPrompt = nil
+                    pendingTimestamp = nil
+                }
+            }
+        }
+        
+        return results
+    }
+
+    /// 从 Pi Agent 复杂的消息 content 结构中提取文本 (支持 thinking, text, toolCall 节点)
+    private func extractPiAgentContent(_ raw: Any?) -> String {
+        if let str = raw as? String {
+            return str
+        }
+        if let array = raw as? [[String: Any]] {
+            var parts: [String] = []
+            for item in array {
+                if let type = item["type"] as? String {
+                    if type == "text", let text = item["text"] as? String {
+                        parts.append(text)
+                    } else if type == "thinking", let thinking = item["thinking"] as? String {
+                        parts.append("🤔 [Thinking] \(thinking)")
+                    } else if type == "toolCall", let name = item["name"] as? String {
+                        let args = item["arguments"] as? [String: Any]
+                        let argsStr = args != nil ? String(describing: args!) : ""
+                        parts.append("🛠️ [Tool Call] \(name)(\(argsStr))")
+                    }
+                }
+            }
+            return parts.joined(separator: "\n")
+        }
+        return ""
     }
 }

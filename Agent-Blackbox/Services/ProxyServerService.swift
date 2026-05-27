@@ -227,7 +227,7 @@ final class ProxyServerService: ObservableObject {
         let customHeadersKeys = ["x-upstream-url", "x-base-url", "x-target-url", "openai-base-url"]
         for key in customHeadersKeys {
             if let customUrl = headers[key], !customUrl.isEmpty {
-                Logger.shared.info("网关代理: 发现自定义目标上游 URL: \(customUrl)")
+                Logger.shared.info("网关代理: 发现自定义目标上游 URL: \(PlanDetectionService.sanitizeURL(customUrl))")
                 return customUrl
             }
         }
@@ -274,7 +274,7 @@ final class ProxyServerService: ObservableObject {
                         Logger.shared.info("网关代理: 检测到本地模型 \(model)，自动路由至本地通用模型服务 (LM Studio/MLX)")
                         return "http://127.0.0.1:1234"
                     } else {
-                        Logger.shared.info("网关代理: 检测到本地模型 \(model)，使用配置的自定义上游: \(customUpstream)")
+                        Logger.shared.info("网关代理: 检测到本地模型 \(model)，使用配置的自定义上游: \(PlanDetectionService.sanitizeURL(customUpstream))")
                         return customUpstream
                     }
                 }
@@ -336,7 +336,33 @@ final class ProxyServerService: ObservableObject {
             }
         }
         
-        guard let upstreamURL = URL(string: cleanBase + cleanPath) else {
+        guard var comps = URLComponents(string: cleanBase) else {
+            sendHTTPResponse(connection: connection, statusCode: 500, statusText: "Internal Error", headers: [:], body: Data("Invalid Upstream URL".utf8))
+            return
+        }
+        
+        let pathQueryParts = cleanPath.components(separatedBy: "?")
+        let rawPath = pathQueryParts[0]
+        
+        let baseHasTrailingSlash = cleanBase.hasSuffix("/")
+        let pathHasLeadingSlash = rawPath.hasPrefix("/")
+        
+        var combinedPath = comps.path
+        if baseHasTrailingSlash && pathHasLeadingSlash {
+            combinedPath += String(rawPath.dropFirst())
+        } else if !baseHasTrailingSlash && !pathHasLeadingSlash {
+            combinedPath += "/" + rawPath
+        } else {
+            combinedPath += rawPath
+        }
+        
+        comps.path = combinedPath
+        
+        if pathQueryParts.count > 1 {
+            comps.query = pathQueryParts[1]
+        }
+        
+        guard let upstreamURL = comps.url else {
             sendHTTPResponse(connection: connection, statusCode: 500, statusText: "Internal Error", headers: [:], body: Data("Invalid Upstream URL".utf8))
             return
         }
@@ -495,6 +521,27 @@ final class ProxyServerService: ObservableObject {
             if model != "unknown" {
                 self.liveRequests[index].model = model
             }
+        } else {
+            let newLog = ProxyRequestLog(
+                id: requestId,
+                timestamp: startTime,
+                method: "POST",
+                path: path,
+                client: client,
+                model: model,
+                prompt: prompt,
+                response: responseText,
+                statusCode: statusCode,
+                duration: duration,
+                promptTokens: promptTokensVal,
+                completionTokens: completionTokensVal,
+                errorMessage: errorMessage,
+                isPending: false
+            )
+            self.liveRequests.insert(newLog, at: 0)
+            if self.liveRequests.count > 100 {
+                self.liveRequests.removeLast()
+            }
         }
 
         // Classify Provider based on path and model name keywords
@@ -527,23 +574,29 @@ final class ProxyServerService: ObservableObject {
             provider = .kimi
         } else if modelLower.contains("glm") || modelLower.contains("zhipu") {
             provider = .zhipu
+        } else if modelLower.contains("inflection") || modelLower == "pi" || modelLower.contains("pi-") || modelLower.hasSuffix("-pi") {
+            provider = .pi
         } else {
             provider = .custom
         }
+
+        let sanitizedPrompt = Self.maskAPIKey(prompt)
+        let sanitizedResponse = Self.maskAPIKey(responseText)
+        let sanitizedError = Self.maskAPIKey(errorMessage)
 
         let parsedLog = ParsedLog(
             timestamp: startTime,
             sourceFile: "ProxyGateway",
             provider: provider,
             modelName: model,
-            prompt: prompt,
-            response: responseText,
+            prompt: sanitizedPrompt,
+            response: sanitizedResponse,
             promptTokens: promptTokensVal,
             completionTokens: completionTokensVal,
             totalTokens: totalTokensVal,
             duration: duration,
             statusCode: statusCode,
-            errorMessage: errorMessage,
+            errorMessage: sanitizedError,
             conversationId: nil,
             metadata: [
                 "client": client,
@@ -560,6 +613,30 @@ final class ProxyServerService: ObservableObject {
 
 
 
+    // MARK: - Sensitive Data Masking
+
+    /// 清洗 prompt/response/error 中可能嵌入的 API Key
+    /// 防止明文 Key 写入 SQLite 数据库
+    private static func maskAPIKey(_ text: String?) -> String? {
+        guard let text else { return nil }
+        let pattern = #"\b(sk|rk|api|key|token)-[A-Za-z0-9_\-]{8,}\b"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+            return text
+        }
+        let ns = text as NSString
+        let matches = regex.matches(in: text, range: NSRange(location: 0, length: ns.length)).reversed()
+        var masked = text
+        for match in matches {
+            let full = ns.substring(with: match.range)
+            let prefix = full.prefix(5)
+            let replacement = "\(prefix)***"
+            if let range = Range(match.range, in: masked) {
+                masked.replaceSubrange(range, with: replacement)
+            }
+        }
+        return masked
+    }
+
     private func estimateTokens(for text: String) -> Int {
         let chineseCharCount = text.filter { $0.isChineseCharacter }.count
         let otherCharCount = text.count - chineseCharCount
@@ -571,7 +648,7 @@ final class ProxyServerService: ObservableObject {
     private func sendHTTPResponse(connection: NWConnection, statusCode: Int, statusText: String, headers: [String: String], body: Data) {
         var responseString = "HTTP/1.1 \(statusCode) \(statusText)\r\n"
         var clientHeaders = headers
-        clientHeaders["Content-Length"] = "\(body.count)"
+        clientHeaders["Content-Length"] = String(body.count)
         clientHeaders["Connection"] = "close"
         
         for (key, val) in clientHeaders {
