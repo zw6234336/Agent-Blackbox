@@ -69,6 +69,7 @@ Agent Blackbox provides a local gateway sandbox that intercept these loops, esti
 * **Network Interceptor**: Apple Network framework `NWListener` for local socket proxying.
 * **Charts**: Swift Charts (`AreaMark`, `LineMark` with gradient fills).
 * **Database**: `SQLite.swift` for lightweight local logging and historical usage aggregation. Heavily optimized using Swift `async/await` and background queue offloading to guarantee stutter-free 60fps UI scrolling.
+* **macOS Scroll Reliability**: Workarounds for a SwiftUI-on-macOS issue where trackpad / scroll-wheel can stop reaching `ScrollView` after long idle or menu/sheet interactions. When adding new scroll containers, prefer `NativeScrollView` (AppKit-backed) or attach `.scrollWheelKeepAlive()` (see `Agent-Blackbox/Utils/ScrollWheelForwarder.swift` and `Agent-Blackbox/AgentBlackboxApp.swift`).
 
 ---
 
