@@ -35,6 +35,19 @@ app.log
 Config/user-config.plist
 data/
 
+# Build artifacts (不应开源)
+Agent-Blackbox.app/
+*.dmg
+
+# Scratch / 临时文件
+scratch/
+
+# Pi goals (本地工作流)
+.pi/
+
+# 审计报告（内部文件）
+AnalysisReport.md
+
 # IDEs
 .idea/
 .vscode/

@@ -2,6 +2,10 @@
 
 An LLM Observability Gateway, Traffic Monitor & Budget Guard for Autonomous AI Agents (Cline, Claude Code, Cursor, Pi, etc.) on macOS.
 
+<p align="center">
+  <img src="docs/screenshots/main-view-dashboard.png" width="800" alt="Agent Blackbox Dashboard">
+</p>
+
 ---
 
 > [简体中文版](#简体中文版)
