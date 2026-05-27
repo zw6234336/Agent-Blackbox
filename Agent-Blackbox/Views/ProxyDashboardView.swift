@@ -796,6 +796,7 @@ struct ProxyDashboardView: View {
                     }
                 }
                 .background(Color.clear)
+                .scrollWheelKeepAlive()
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1798,4 +1799,3 @@ struct OnboardingGuideView: View {
         .foregroundStyle(.secondary)
     }
 }
-
