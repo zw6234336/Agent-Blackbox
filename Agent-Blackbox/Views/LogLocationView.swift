@@ -199,7 +199,7 @@ struct InteractionView: View {
     let log: ParsedLog
 
     var body: some View {
-        ScrollView {
+        NativeScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 // Header
                 HStack(spacing: 12) {
@@ -249,7 +249,6 @@ struct InteractionView: View {
                 .padding()
             }
         }
-        .scrollWheelKeepAlive()
         .navigationTitle("交互详情")
     }
 }

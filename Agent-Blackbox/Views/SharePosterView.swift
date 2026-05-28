@@ -574,7 +574,7 @@ struct SharePosterView: View {
                     .buttonStyle(.plain)
                 }
                 
-                ScrollView {
+                NativeScrollView {
                     VStack(alignment: .leading, spacing: 20) {
                         // Section 1: Data Source Settings
                         VStack(alignment: .leading, spacing: 8) {

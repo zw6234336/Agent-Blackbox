@@ -110,6 +110,15 @@ struct MonitorConfig: Codable, Equatable {
     var dataRetentionDays: Int = 90
     var exportDirectory: String = NSHomeDirectory() + "/Library/Application Support/Agent-Blackbox/Exports/"
     
+    // Backup and Pruning Settings
+    var enableAutoBackup: Bool = true
+    var backupIntervalDays: Int = 7
+    var maxBackupFiles: Int = 5
+    var backupDirectory: String = NSHomeDirectory() + "/Library/Application Support/Agent-Blackbox/Backups/"
+    var backupDirectoryBookmark: String? = nil
+    var lastBackupTimestamp: Double = 0
+    var enableAutoPrune: Bool = true
+    
     // Proxy Settings
     var enableProxy: Bool = true
     var proxyPort: Int = 9999
@@ -144,6 +153,13 @@ struct MonitorConfig: Codable, Equatable {
         case enabledProviders
         case dataRetentionDays
         case exportDirectory
+        case enableAutoBackup
+        case backupIntervalDays
+        case maxBackupFiles
+        case backupDirectory
+        case backupDirectoryBookmark
+        case lastBackupTimestamp
+        case enableAutoPrune
         case enableProxy
         case proxyPort
         case openaiUpstreamUrl
@@ -188,6 +204,14 @@ struct MonitorConfig: Codable, Equatable {
         self.enabledProviders = try container.decodeIfPresent([String].self, forKey: .enabledProviders) ?? LLMProvider.allCases.map { $0.rawValue }
         self.dataRetentionDays = try container.decodeIfPresent(Int.self, forKey: .dataRetentionDays) ?? 90
         self.exportDirectory = try container.decodeIfPresent(String.self, forKey: .exportDirectory) ?? (NSHomeDirectory() + "/Library/Application Support/Agent-Blackbox/Exports/")
+        
+        self.enableAutoBackup = try container.decodeIfPresent(Bool.self, forKey: .enableAutoBackup) ?? true
+        self.backupIntervalDays = try container.decodeIfPresent(Int.self, forKey: .backupIntervalDays) ?? 7
+        self.maxBackupFiles = try container.decodeIfPresent(Int.self, forKey: .maxBackupFiles) ?? 5
+        self.backupDirectory = try container.decodeIfPresent(String.self, forKey: .backupDirectory) ?? (NSHomeDirectory() + "/Library/Application Support/Agent-Blackbox/Backups/")
+        self.backupDirectoryBookmark = try container.decodeIfPresent(String.self, forKey: .backupDirectoryBookmark)
+        self.lastBackupTimestamp = try container.decodeIfPresent(Double.self, forKey: .lastBackupTimestamp) ?? 0
+        self.enableAutoPrune = try container.decodeIfPresent(Bool.self, forKey: .enableAutoPrune) ?? true
         
         self.enableProxy = try container.decodeIfPresent(Bool.self, forKey: .enableProxy) ?? true
         self.proxyPort = try container.decodeIfPresent(Int.self, forKey: .proxyPort) ?? 9999

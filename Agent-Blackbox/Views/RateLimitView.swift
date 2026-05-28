@@ -37,7 +37,7 @@ struct RateLimitView: View {
                 .opacity(0.5)
 
             // ── Content ──────────────────────────────────────────
-            ScrollView {
+            NativeScrollView {
                 VStack(spacing: 0) {
                     switch selectedTab {
                     case .overview:
@@ -59,9 +59,8 @@ struct RateLimitView: View {
                 }
                 .animation(.easeInOut(duration: 0.25), value: selectedTab)
             }
-            .scrollWheelKeepAlive()
-            .background(Color.dashboardBackground)
         }
+        .background(Color.dashboardBackground)
         .onAppear {
             tracker.bind(database: database, config: configService)
             tracker.start()

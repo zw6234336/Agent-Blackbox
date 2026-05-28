@@ -12,7 +12,7 @@ struct LogDetailView: View {
     @State private var newTag = ""
 
     var body: some View {
-        ScrollView {
+        NativeScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 // Header with actions
                 headerSection
@@ -96,7 +96,6 @@ struct LogDetailView: View {
             }
             .padding()
         }
-        .scrollWheelKeepAlive()
         .textSelection(.enabled)
         .onAppear {
             if isModal {

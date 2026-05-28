@@ -17,13 +17,25 @@ struct MonitorView: View {
             HSplitView {
                 // Left: Detected logs
                 detectedLogsList
-                    .frame(minWidth: 300)
+                    .frame(minWidth: 350, maxHeight: .infinity)
+                    .background(Color.cardBackground.opacity(0.4))
+                    .cornerRadius(12)
+                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.secondary.opacity(0.15), lineWidth: 1))
+                    .padding([.leading, .vertical], 16)
                 
                 // Right: Monitored directories
                 monitoredDirectories
-                    .frame(minWidth: 300)
+                    .frame(minWidth: 350, maxHeight: .infinity)
+                    .background(Color.cardBackground.opacity(0.4))
+                    .cornerRadius(12)
+                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.secondary.opacity(0.15), lineWidth: 1))
+                    .padding([.trailing, .vertical], 16)
+                    .padding(.leading, 8)
             }
+            .frame(maxHeight: .infinity)
+            .background(Color.dashboardBackground)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     
     // MARK: - Status Header
@@ -49,8 +61,9 @@ struct MonitorView: View {
                 .buttonStyle(.plain)
             }
             .padding()
-            .background(Color.primary.opacity(0.04))
+            .background(Color.cardBackground.opacity(0.6))
             .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.secondary.opacity(0.15), lineWidth: 1))
             
             // Card 2: Proxy Gateway
             HStack(spacing: 12) {
@@ -71,10 +84,12 @@ struct MonitorView: View {
                 .buttonStyle(.plain)
             }
             .padding()
-            .background(Color.primary.opacity(0.04))
+            .background(Color.cardBackground.opacity(0.6))
             .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.secondary.opacity(0.15), lineWidth: 1))
         }
         .padding()
+        .background(Color.cardBackground.opacity(0.2))
     }
     
     // MARK: - Detected Logs
@@ -100,15 +115,18 @@ struct MonitorView: View {
                 }
                 .frame(maxWidth: .infinity)
             } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 4) {
+                NativeScrollView {
+                    LazyVStack(alignment: .leading, spacing: 8) {
                         ForEach(fileMonitor.detectedLogs, id: \.self) { url in
                             LogEntryRow(url: url)
+                                .padding(8)
+                                .background(Color.cardBackground.opacity(0.3))
+                                .cornerRadius(8)
+                                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.1), lineWidth: 1))
                         }
                     }
                     .padding()
                 }
-                .scrollWheelKeepAlive()
             }
         }
     }
@@ -132,28 +150,56 @@ struct MonitorView: View {
             
             Divider()
             
-            List {
-                ForEach(configService.config.monitoredDirectories, id: \.self) { dir in
-                    HStack {
-                        Image(systemName: "folder")
-                            .foregroundStyle(Color.accentGradientStart)
-                        VStack(alignment: .leading) {
-                            Text(dir.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
-                                .font(.subheadline)
-                            Text(FileManager.default.fileExists(atPath: dir) ? "有效" : "目录不存在")
-                                .font(.caption2)
-                                .foregroundStyle(FileManager.default.fileExists(atPath: dir) ? Color.successGreen : Color.errorRed)
+            if configService.config.monitoredDirectories.isEmpty {
+                VStack(spacing: 12) {
+                    Spacer()
+                    Image(systemName: "folder.badge.questionmark")
+                        .font(.system(size: 36))
+                        .foregroundStyle(.tertiary)
+                    Text("暂无监控目录")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity)
+            } else {
+                NativeScrollView {
+                    LazyVStack(alignment: .leading, spacing: 8) {
+                        ForEach(configService.config.monitoredDirectories, id: \.self) { dir in
+                            HStack {
+                                Image(systemName: "folder.fill")
+                                    .font(.title3)
+                                    .foregroundStyle(Color.accentGradientStart)
+                                
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(dir.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
+                                        .font(.subheadline)
+                                        .fontWeight(.medium)
+                                        .lineLimit(1)
+                                    Text(FileManager.default.fileExists(atPath: dir) ? "目录连接正常" : "目录不存在或不可读")
+                                        .font(.caption2)
+                                        .foregroundStyle(FileManager.default.fileExists(atPath: dir) ? Color.successGreen : Color.errorRed)
+                                }
+                                
+                                Spacer()
+                                
+                                Button(action: {
+                                    configService.config.monitoredDirectories.removeAll { $0 == dir }
+                                    configService.save()
+                                }) {
+                                    Image(systemName: "trash")
+                                        .foregroundStyle(.secondary)
+                                }
+                                .buttonStyle(.plain)
+                                .help("删除此监控目录")
+                            }
+                            .padding(8)
+                            .background(Color.cardBackground.opacity(0.3))
+                            .cornerRadius(8)
+                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.1), lineWidth: 1))
                         }
-                        Spacer()
-                        Button(action: {
-                            configService.config.monitoredDirectories.removeAll { $0 == dir }
-                            configService.save()
-                        }) {
-                            Image(systemName: "minus.circle")
-                                .foregroundStyle(Color.errorRed)
-                        }
-                        .buttonStyle(.plain)
                     }
+                    .padding()
                 }
             }
         }

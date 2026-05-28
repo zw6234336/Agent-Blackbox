@@ -743,56 +743,54 @@ struct ProxyDashboardView: View {
                     .cardStyle()
                 }
             } else {
-                ScrollView {
-                    LazyVStack(spacing: 0) {
-                        ForEach(viewModel.filteredRequests) { request in
-                            liveRequestRow(for: request)
-                                .contentShape(Rectangle())
-                                .onTapGesture {
-                                    withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
-                                        viewModel.select(request)
-                                        self.replayResult = nil
-                                        self.replayingRequest = false
-                                    }
+                VStack(spacing: 0) {
+                    ForEach(viewModel.filteredRequests) { request in
+                        liveRequestRow(for: request)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                                    viewModel.select(request)
+                                    self.replayResult = nil
+                                    self.replayingRequest = false
                                 }
-                                .contextMenu {
-                                    Button {
-                                        replayRequest(request)
-                                    } label: {
-                                        Label("立即进行沙盒重放 (Replay)", systemImage: "play.right.fill")
-                                    }
-                                    .disabled(request.isPending)
+                            }
+                            .contextMenu {
+                                Button {
+                                    replayRequest(request)
+                                } label: {
+                                    Label("立即进行沙盒重放 (Replay)", systemImage: "play.right.fill")
+                                }
+                                .disabled(request.isPending)
 
-                                    Divider()
+                                Divider()
 
-                                    Button {
+                                Button {
+                                    NSPasteboard.general.clearContents()
+                                    NSPasteboard.general.setString(request.path, forType: .string)
+                                } label: {
+                                    Label("复制请求 Path", systemImage: "link")
+                                }
+
+                                Button {
+                                    if let prompt = request.prompt {
                                         NSPasteboard.general.clearContents()
-                                        NSPasteboard.general.setString(request.path, forType: .string)
-                                    } label: {
-                                        Label("复制请求 Path", systemImage: "link")
+                                        NSPasteboard.general.setString(prompt, forType: .string)
                                     }
-
-                                    Button {
-                                        if let prompt = request.prompt {
-                                            NSPasteboard.general.clearContents()
-                                            NSPasteboard.general.setString(prompt, forType: .string)
-                                        }
-                                    } label: {
-                                        Label("复制 Request Payload", systemImage: "doc.on.doc")
-                                    }
-                                    .disabled(request.prompt == nil)
-
-                                    Button {
-                                        if let response = request.response {
-                                            NSPasteboard.general.clearContents()
-                                            NSPasteboard.general.setString(response, forType: .string)
-                                        }
-                                    } label: {
-                                        Label("复制 Response Body", systemImage: "doc.on.doc.fill")
-                                    }
-                                    .disabled(request.response == nil)
+                                } label: {
+                                    Label("复制 Request Payload", systemImage: "doc.on.doc")
                                 }
-                        }
+                                .disabled(request.prompt == nil)
+
+                                Button {
+                                    if let response = request.response {
+                                        NSPasteboard.general.clearContents()
+                                        NSPasteboard.general.setString(response, forType: .string)
+                                    }
+                                } label: {
+                                    Label("复制 Response Body", systemImage: "doc.on.doc.fill")
+                                }
+                                .disabled(request.response == nil)
+                            }
                     }
                 }
                 .background(Color.clear)
@@ -1013,7 +1011,7 @@ struct ProxyDashboardView: View {
     }
     
     private func payloadView(for request: ProxyRequestLog) -> some View {
-        ScrollView {
+        NativeScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 // Info rows
                 VStack(spacing: 6) {
@@ -1103,7 +1101,6 @@ struct ProxyDashboardView: View {
                 }
             }
         }
-        .scrollWheelKeepAlive()
     }
     
     private func loopAnalysisView(for request: ProxyRequestLog) -> some View {
@@ -1202,7 +1199,7 @@ struct ProxyDashboardView: View {
                 .font(.system(size: 11, weight: .bold))
             
             if let result = replayResult {
-                ScrollView {
+                NativeScrollView {
                     Text(result)
                         .font(.system(size: 10, design: .monospaced))
                         .padding(8)
@@ -1211,7 +1208,6 @@ struct ProxyDashboardView: View {
                         .cornerRadius(6)
                         .textSelection(.enabled)
                 }
-                .scrollWheelKeepAlive()
             } else {
                 VStack {
                     Spacer()
@@ -1544,7 +1540,7 @@ struct SimpleDiffView: View {
     }
     
     var body: some View {
-        ScrollView {
+        NativeScrollView {
             VStack(alignment: .leading, spacing: 2) {
                 ForEach(0..<diffLines.count, id: \.self) { index in
                     let line = diffLines[index]
@@ -1564,7 +1560,6 @@ struct SimpleDiffView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .scrollWheelKeepAlive()
         .padding(8)
         .background(Color.primary.opacity(0.03))
         .cornerRadius(6)

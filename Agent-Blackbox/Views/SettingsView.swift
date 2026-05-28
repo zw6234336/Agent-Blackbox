@@ -9,6 +9,10 @@ struct SettingsView: View {
     
     @State private var showClearConfirmation = false
     @State private var cleanupResult: String? = nil
+    @State private var backupResult: String? = nil
+    @State private var isBackingUp = false
+    @State private var pruneResult: String? = nil
+    @State private var isPruning = false
 
     var body: some View {
         TabView {
@@ -70,15 +74,9 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-
-            Section("数据保留") {
-                Stepper("保留 \(configService.config.dataRetentionDays) 天",
-                        value: $configService.config.dataRetentionDays,
-                        in: 7...365, step: 7)
-            }
         }
         .formStyle(.grouped)
-        .onChange(of: configService.config) {
+        .onChange(of: configService.config) { oldValue, newValue in
             configService.save()
         }
     }
@@ -232,7 +230,7 @@ struct SettingsView: View {
 
     private var dataSettings: some View {
         Form {
-            Section("数据库") {
+            Section("数据库状态") {
                 HStack {
                     Text("路径")
                         .foregroundStyle(.secondary)
@@ -264,6 +262,137 @@ struct SettingsView: View {
                     Button("取消", role: .cancel) {}
                 } message: {
                     Text("此操作将删除所有日志数据，无法恢复。")
+                }
+            }
+
+            Section("数据保留与清理") {
+                Toggle("启用自动清理过期日志", isOn: $configService.config.enableAutoPrune)
+                
+                HStack {
+                    Text("保留期限")
+                        .foregroundStyle(.secondary)
+                    Stepper("保留 \(configService.config.dataRetentionDays) 天",
+                            value: $configService.config.dataRetentionDays,
+                            in: 7...365, step: 7)
+                }
+                
+                Text("说明：清理只会删除未收藏且不属于任何收藏集的普通日志，打星收藏或属于收藏集的关键日志会被永久保留。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                
+                HStack {
+                    Button(action: {
+                        isPruning = true
+                        pruneResult = nil
+                        Task {
+                            let deletedCount = await database.pruneExpiredLogs(retentionDays: configService.config.dataRetentionDays)
+                            isPruning = false
+                            pruneResult = "已删除 \(deletedCount) 条过期日志"
+                        }
+                    }) {
+                        if isPruning {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Text("立即清理过期日志")
+                        }
+                    }
+                    .disabled(isPruning)
+                    
+                    if let result = pruneResult {
+                        Text(result)
+                            .font(.caption)
+                            .foregroundStyle(.green)
+                    }
+                }
+            }
+
+            Section("数据备份") {
+                Toggle("启用自动备份", isOn: $configService.config.enableAutoBackup)
+                
+                if configService.config.enableAutoBackup {
+                    Picker("备份频率", selection: $configService.config.backupIntervalDays) {
+                        Text("每天").tag(1)
+                        Text("每周 (7天)").tag(7)
+                        Text("每两周 (14天)").tag(14)
+                        Text("每月 (30天)").tag(30)
+                    }
+                    
+                    Stepper("保留历史备份数量: \(configService.config.maxBackupFiles) 个",
+                            value: $configService.config.maxBackupFiles,
+                            in: 3...20)
+                }
+                
+                HStack {
+                    Text("备份目录")
+                        .foregroundStyle(.secondary)
+                    Text(configService.config.backupDirectory.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
+                        .font(.caption)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer()
+                    Button("更改...") {
+                        let panel = NSOpenPanel()
+                        panel.canChooseDirectories = true
+                        panel.canChooseFiles = false
+                        panel.allowsMultipleSelection = false
+                        panel.canCreateDirectories = true
+                        if panel.runModal() == .OK, let url = panel.url {
+                            let bookmarkBase64: String?
+                            do {
+                                let data = try url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
+                                bookmarkBase64 = data.base64EncodedString()
+                            } catch {
+                                if let data = try? url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil) {
+                                    bookmarkBase64 = data.base64EncodedString()
+                                } else {
+                                    bookmarkBase64 = nil
+                                }
+                            }
+                            configService.config.backupDirectoryBookmark = bookmarkBase64
+                            configService.config.backupDirectory = url.path
+                            configService.save()
+                        }
+                    }
+                }
+                
+                HStack {
+                    Button(action: {
+                        isBackingUp = true
+                        backupResult = nil
+                        Task {
+                            do {
+                                let url = try await database.runManualBackup(configService: configService)
+                                isBackingUp = false
+                                backupResult = "备份成功"
+                                NSWorkspace.shared.activateFileViewerSelecting([url])
+                            } catch {
+                                isBackingUp = false
+                                backupResult = "备份失败: \(error.localizedDescription)"
+                            }
+                        }
+                    }) {
+                        if isBackingUp {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Text("立即执行备份")
+                        }
+                    }
+                    .disabled(isBackingUp)
+                    
+                    if let result = backupResult {
+                        Text(result)
+                            .font(.caption)
+                            .foregroundStyle(result.contains("失败") ? .red : .green)
+                    } else if configService.config.lastBackupTimestamp > 0 {
+                        let date = Date(timeIntervalSince1970: configService.config.lastBackupTimestamp)
+                        Text("上次备份: \(date.formatted(date: .abbreviated, time: .shortened))")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("从未备份")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
 
@@ -308,6 +437,9 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+        .onChange(of: configService.config) { oldValue, newValue in
+            configService.save()
+        }
     }
 
     private var clientInterceptionSettings: some View {

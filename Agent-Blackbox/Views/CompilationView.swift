@@ -158,7 +158,7 @@ struct CompilationView: View {
     // MARK: - Detail View
 
     private func detailView(_ comp: LogCompilation) -> some View {
-        ScrollView {
+        NativeScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 // Header
                 headerSection(comp)
@@ -178,7 +178,6 @@ struct CompilationView: View {
             }
             .padding()
         }
-        .scrollWheelKeepAlive()
         .onChange(of: compilationService.compilations) {
             // Refresh selected when compilations update
             if let sel = selectedCompilation,
@@ -405,13 +404,12 @@ struct CompilationView: View {
                 }
 
                 if let content = compilationService.getOutputPreview(for: comp) {
-                    ScrollView {
+                    NativeScrollView {
                         Text(content)
                             .font(.system(.caption, design: .monospaced))
                             .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .scrollWheelKeepAlive()
                     .frame(maxHeight: 400)
                 } else {
                     Text("无法读取输出文件")

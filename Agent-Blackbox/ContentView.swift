@@ -150,6 +150,11 @@ struct ContentView: View {
                     .tag(6)
             }
 
+            Section("分析") {
+                Label("今日复盘", systemImage: "calendar.day.timeline.left")
+                    .tag(8)
+            }
+
             Section("用量") {
                 Label("速率/配额", systemImage: "gauge.with.dots.needle.bottom.50percent")
                     .tag(4)
@@ -195,10 +200,14 @@ struct ContentView: View {
                     .environmentObject(database)
             case 7:
                 ProxyDashboardView()
+            case 8:
+                DailySummaryView()
+                    .environmentObject(database)
             default:
                 DashboardView()
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
             fileMonitor.bind(database: database)
             fileMonitor.updateFilePatterns(configService.config.filePatterns)

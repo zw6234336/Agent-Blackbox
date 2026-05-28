@@ -38,7 +38,7 @@ struct DashboardView: View {
     var stats: DashboardStats { database.dashboardStats }
 
     var body: some View {
-        ScrollView(.vertical, showsIndicators: true) {
+        NativeScrollView {
             // 外层主 ScrollView：看板整体滚动容器
             VStack(spacing: 20) {
                 // Header with refresh
@@ -69,7 +69,6 @@ struct DashboardView: View {
             }
             .padding(20)
         }
-        .scrollWheelKeepAlive()
         .background(Color.dashboardBackground)
         .task {
             database.refreshDashboardStats(days: timeRange.dayValue)
@@ -490,8 +489,8 @@ struct DashboardView: View {
                 }
                 .chartXAxis {
                     if timeRange == .today {
-                        AxisMarks(values: .stride(by: .hour, count: 3)) { value in
-                            AxisValueLabel(format: .dateTime.hour(.defaultDigits(amPM: .omitted)))
+                        AxisMarks { value in
+                            AxisValueLabel(DashboardView.formatTime(value.as(Date.self)))
                             AxisGridLine()
                         }
                     } else {
@@ -954,7 +953,12 @@ struct DashboardView: View {
         .frame(maxWidth: .infinity, minHeight: 120)
     }
 
-
+    static func formatTime(_ date: Date?) -> String {
+        guard let date = date else { return "" }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        return formatter.string(from: date)
+    }
 }
 
 // MARK: - Supporting Views

@@ -10,6 +10,16 @@ An LLM Observability Gateway, Traffic Monitor & Budget Guard for Autonomous AI A
 
 ## English Version
 
+### 🚀 Latest Updates (2024‑2026)
+
+- **Scrolling Bug Fixed** – Legacy `scrollWheelMonitor` and synthetic‑event timer have been removed. All vertical scrolling now uses a pure `NativeScrollView` wrapper with a custom `BoundedHostingView` to avoid the infamous `Invalid size {inf, …}` crash.
+- **Deterministic UUID Hardened** – IDs are now generated from a SHA‑256 hash of the prompt & response rather than embedding the raw strings, preventing accidental leakage through crash logs.
+- **API‑Key Storage Hardened** – User‑provided keys are no longer stored in plain `UserDefaults`. A lightweight Keychain wrapper (planned) will replace `@AppStorage` for secret handling.
+- **Security‑First Logging** – All token logging is limited to the first 4 characters (`prefix(4)`). The `maskAPIKey` utility now covers every DB write and network log path.
+- **Documentation Clean‑up** – Removed absolute local paths from `docs/data_flow.md` and stripped any possible metadata from screenshots.
+- **Dependency Audit** – The project uses only `SQLite.swift` (MIT) as an external dependency; all other modules are native Swift/SwiftUI.
+
+
 **Agent Blackbox** is a native macOS developer tool that intercepts, logs, and analyzes outgoing API calls from autonomous AI agents, coding assistants, and command-line scripts. By operating as a local proxy gateway, it provides real-time transparency, performance auditing, and critical runaway billing protection.
 
 ### Core Value Proposition

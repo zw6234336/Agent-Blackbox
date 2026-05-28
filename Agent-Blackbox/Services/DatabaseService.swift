@@ -666,25 +666,25 @@ final class DatabaseService: ObservableObject {
                 if daysLimit == 0 {
                     limitVal = Calendar.current.startOfDay(for: Date()).timeIntervalSince1970
                     dayQuery = """
-                        SELECT strftime('%Y-%m-%d %H:00:00', timestamp, 'unixepoch', 'localtime') as hour_bucket,
+                        SELECT datetime(cast(timestamp as integer) / 300 * 300, 'unixepoch', 'localtime') as minute_bucket,
                                COALESCE(SUM(prompt_tokens), 0) as pt,
                                COALESCE(SUM(completion_tokens), 0) as ct
                         FROM logs
                         WHERE timestamp >= ?
-                        GROUP BY hour_bucket
-                        ORDER BY hour_bucket ASC
+                        GROUP BY minute_bucket
+                        ORDER BY minute_bucket ASC
                     """
                     modelDayQuery = """
-                        SELECT strftime('%Y-%m-%d %H:00:00', timestamp, 'unixepoch', 'localtime') as hour_bucket,
+                        SELECT datetime(cast(timestamp as integer) / 300 * 300, 'unixepoch', 'localtime') as minute_bucket,
                                model_name,
                                COALESCE(SUM(prompt_tokens), 0) as pt,
                                COALESCE(SUM(completion_tokens), 0) as ct
                         FROM logs
                         WHERE timestamp >= ? AND model_name IS NOT NULL AND model_name != ''
-                        GROUP BY hour_bucket, model_name
-                        ORDER BY hour_bucket ASC
+                        GROUP BY minute_bucket, model_name
+                        ORDER BY minute_bucket ASC
                     """
-                    formatter.dateFormat = "yyyy-MM-dd HH:00:00"
+                    formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
                 } else {
                     limitVal = Date().addingTimeInterval(-Double(daysLimit) * 24 * 3600).timeIntervalSince1970
                     dayQuery = """
@@ -788,7 +788,34 @@ final class DatabaseService: ObservableObject {
                     }
                     return $0.date < $1.date
                 }
+                
+                // Trim trailing points where ALL models have 0 tokens to avoid drop-to-zero visual artifact at the end
+                if !modelTokensByDayResult.isEmpty {
+                    var dateSums: [Date: Int] = [:]
+                    for pt in modelTokensByDayResult {
+                        dateSums[pt.date, default: 0] += (pt.promptTokens + pt.completionTokens)
+                    }
+                    let sortedDates = dateSums.keys.sorted(by: >)
+                    if let latestNonZeroDate = sortedDates.first(where: { dateSums[$0, default: 0] > 0 }) {
+                        modelTokensByDayResult = modelTokensByDayResult.filter { $0.date <= latestNonZeroDate }
+                    } else {
+                        modelTokensByDayResult.removeAll()
+                    }
+                }
                 stats.modelTokensByDay = modelTokensByDayResult
+
+                if !stats.tokensByDay.isEmpty {
+                    var dateSums: [Date: Int] = [:]
+                    for pt in stats.tokensByDay {
+                        dateSums[pt.date, default: 0] += (pt.promptTokens + pt.completionTokens)
+                    }
+                    let sortedDates = dateSums.keys.sorted(by: >)
+                    if let latestNonZeroDate = sortedDates.first(where: { dateSums[$0, default: 0] > 0 }) {
+                        stats.tokensByDay = stats.tokensByDay.filter { $0.date <= latestNonZeroDate }
+                    } else {
+                        stats.tokensByDay.removeAll()
+                    }
+                }
 
                 // Recent logs
                 let recentLogsRows = try dbConnection.prepare(self.logsTable.order(self.timestamp.desc).limit(10))
@@ -1081,6 +1108,177 @@ final class DatabaseService: ObservableObject {
                     Logger.shared.error("脏数据清理失败: \(error.localizedDescription)")
                 }
                 continuation.resume(returning: deleted)
+            }
+        }
+    }
+
+    // MARK: - Backup and Pruning
+
+    /// 删除超出保留期限的历史日志（安全排除书签日志与加入收藏集的日志）
+    @discardableResult
+    func pruneExpiredLogs(retentionDays: Int) async -> Int {
+        guard let db else { return 0 }
+        return await withCheckedContinuation { continuation in
+            dbQueue.async {
+                do {
+                    let cutoff = Date().timeIntervalSince1970 - Double(retentionDays * 24 * 60 * 60)
+                    let query = """
+                        DELETE FROM logs 
+                        WHERE timestamp < ? 
+                          AND is_bookmarked = 0 
+                          AND id NOT IN (SELECT log_id FROM collection_logs)
+                    """
+                    try db.run(query, cutoff)
+                    let deleted = db.changes
+                    if deleted > 0 {
+                        Task { @MainActor in
+                            await self.reloadLogs()
+                            self.refreshDashboardStats()
+                        }
+                    }
+                    continuation.resume(returning: deleted)
+                } catch {
+                    Logger.shared.error("清理过期日志失败: \(error.localizedDescription)")
+                    continuation.resume(returning: 0)
+                }
+            }
+        }
+    }
+
+    /// 利用 SQLite "VACUUM INTO" 命令将当前数据库克隆为一个一致的备份文件
+    func backupDatabase(to destinationURL: URL, isSecurityScoped: Bool = false) async throws {
+        guard let db = db else {
+            throw NSError(domain: "DatabaseService", code: 500, userInfo: [NSLocalizedDescriptionKey: "数据库连接未初始化"])
+        }
+        return try await withCheckedThrowingContinuation { continuation in
+            dbQueue.async {
+                let accessed = isSecurityScoped ? destinationURL.deletingLastPathComponent().startAccessingSecurityScopedResource() : false
+                defer {
+                    if accessed {
+                        destinationURL.deletingLastPathComponent().stopAccessingSecurityScopedResource()
+                    }
+                }
+                do {
+                    let fm = FileManager.default
+                    try fm.createDirectory(at: destinationURL.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: nil)
+                    
+                    // If backup file already exists, delete it first (VACUUM INTO fails if target file exists)
+                    if fm.fileExists(atPath: destinationURL.path) {
+                        try fm.removeItem(at: destinationURL)
+                    }
+                    
+                    // Execute VACUUM INTO
+                    let sql = "VACUUM INTO '\(destinationURL.path)'"
+                    try db.execute(sql)
+                    
+                    Logger.shared.info("数据库备份成功: \(destinationURL.path)")
+                    continuation.resume()
+                } catch {
+                    Logger.shared.error("数据库备份失败: \(error.localizedDescription)")
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    private func pruneOldBackupFiles(backupDir: String, maxKeep: Int) {
+        let fm = FileManager.default
+        let dirURL = URL(fileURLWithPath: backupDir)
+        guard let files = try? fm.contentsOfDirectory(at: dirURL, includingPropertiesForKeys: [.creationDateKey], options: .skipsHiddenFiles) else {
+            return
+        }
+        
+        let backupFiles = files.filter { $0.pathExtension == "db" && $0.lastPathComponent.hasPrefix("backup_logs_") }
+        
+        if backupFiles.count > maxKeep {
+            let sortedFiles = backupFiles.sorted { file1, file2 in
+                let date1 = (try? file1.resourceValues(forKeys: [.creationDateKey]))?.creationDate ?? Date.distantPast
+                let date2 = (try? file2.resourceValues(forKeys: [.creationDateKey]))?.creationDate ?? Date.distantPast
+                return date1 < date2
+            }
+            
+            let toDeleteCount = sortedFiles.count - maxKeep
+            for i in 0..<toDeleteCount {
+                let fileToDelete = sortedFiles[i]
+                do {
+                    try fm.removeItem(at: fileToDelete)
+                    Logger.shared.info("删除了旧备份文件: \(fileToDelete.lastPathComponent)")
+                } catch {
+                    Logger.shared.error("删除旧备份文件失败: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    @discardableResult
+    func runManualBackup(configService: ConfigService) async throws -> URL {
+        let config = configService.config
+        
+        // Resolve security scoped URL or standard folder path
+        var resolvedURL: URL? = nil
+        var isSecurityScoped = false
+        if let bookmarkBase64 = config.backupDirectoryBookmark,
+           let bookmarkData = Data(base64Encoded: bookmarkBase64) {
+            var isStale = false
+            if let url = try? URL(resolvingBookmarkData: bookmarkData, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &isStale) {
+                resolvedURL = url
+                isSecurityScoped = true
+            } else if let url = try? URL(resolvingBookmarkData: bookmarkData, options: [], relativeTo: nil, bookmarkDataIsStale: &isStale) {
+                resolvedURL = url
+            }
+        }
+        
+        let dirURL = resolvedURL ?? URL(fileURLWithPath: config.backupDirectory.replacingOccurrences(of: "~", with: NSHomeDirectory()))
+        
+        // Access security resource if security-scoped
+        let accessed = isSecurityScoped ? dirURL.startAccessingSecurityScopedResource() : false
+        defer {
+            if accessed {
+                dirURL.stopAccessingSecurityScopedResource()
+            }
+        }
+        
+        let fm = FileManager.default
+        try fm.createDirectory(at: dirURL, withIntermediateDirectories: true, attributes: nil)
+        
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd_HHmmss"
+        let dateString = formatter.string(from: Date())
+        let destURL = dirURL.appendingPathComponent("backup_logs_\(dateString).db")
+        
+        try await backupDatabase(to: destURL, isSecurityScoped: isSecurityScoped)
+        pruneOldBackupFiles(backupDir: dirURL.path, maxKeep: config.maxBackupFiles)
+        
+        let now = Date().timeIntervalSince1970
+        configService.config.lastBackupTimestamp = now
+        configService.save()
+        
+        return destURL
+    }
+
+    func performStartupMaintenance(configService: ConfigService) async {
+        let config = configService.config
+        
+        // 1. Auto Prune expired logs
+        if config.enableAutoPrune {
+            let deletedCount = await pruneExpiredLogs(retentionDays: config.dataRetentionDays)
+            if deletedCount > 0 {
+                Logger.shared.info("自动清理过期日志: 已删除 \(deletedCount) 条")
+            }
+        }
+        
+        // 2. Auto Backup database
+        if config.enableAutoBackup {
+            let now = Date().timeIntervalSince1970
+            let intervalSeconds = Double(config.backupIntervalDays * 24 * 60 * 60)
+            if now - config.lastBackupTimestamp >= intervalSeconds {
+                Logger.shared.info("达到自动备份周期，开始自动备份...")
+                do {
+                    let _ = try await runManualBackup(configService: configService)
+                    Logger.shared.info("周期性自动备份成功。")
+                } catch {
+                    Logger.shared.error("周期性自动备份失败: \(error.localizedDescription)")
+                }
             }
         }
     }

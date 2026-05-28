@@ -13,7 +13,7 @@ struct InsuranceDashboardView: View {
     let workspace: InsuranceWorkspaceData
 
     var body: some View {
-        ScrollView {
+        NativeScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 DashboardSummaryCard(workspace: workspace)
                 planningReadiness
@@ -24,7 +24,6 @@ struct InsuranceDashboardView: View {
             }
             .padding(24)
         }
-        .scrollWheelKeepAlive()
         .background(InsurancePalette.background.ignoresSafeArea())
     }
 
@@ -124,7 +123,7 @@ struct MyCoverageView: View {
     }
 
     var body: some View {
-        ScrollView {
+        NativeScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 SectionHeader(title: "我的保障", subtitle: "按家庭成员查看已配置保单、责任覆盖和关键缺口")
                 memberSelector
@@ -134,7 +133,6 @@ struct MyCoverageView: View {
             }
             .padding(24)
         }
-        .scrollWheelKeepAlive()
         .background(InsurancePalette.background.ignoresSafeArea())
         .onAppear {
             selectedMemberID = selectedMemberID ?? workspace.members.first?.id
@@ -244,7 +242,7 @@ struct GapAnalysisView: View {
     }
 
     var body: some View {
-        ScrollView {
+        NativeScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 SectionHeader(title: "保障分析", subtitle: "按风险维度看覆盖情况，用卡片和进度替代复杂表格")
                 SoftCard {
@@ -294,7 +292,6 @@ struct GapAnalysisView: View {
             }
             .padding(24)
         }
-        .scrollWheelKeepAlive()
         .background(InsurancePalette.background.ignoresSafeArea())
     }
 }
@@ -308,7 +305,7 @@ struct RecommendationsView: View {
     }
 
     var body: some View {
-        ScrollView {
+        NativeScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 SectionHeader(title: "缺口推荐", subtitle: "先告诉用户最该补什么，再解释为什么、补多少、预算大概多少")
                 recommendationSummary
@@ -317,7 +314,6 @@ struct RecommendationsView: View {
             }
             .padding(24)
         }
-        .scrollWheelKeepAlive()
         .background(InsurancePalette.background.ignoresSafeArea())
         .onAppear {
             selectedRecommendationID = selectedRecommendationID ?? workspace.recommendations.first?.id
@@ -398,7 +394,7 @@ struct ProductComparisonView: View {
     let workspace: InsuranceWorkspaceData
 
     var body: some View {
-        ScrollView {
+        NativeScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 SectionHeader(title: "产品对比", subtitle: "只保留少量候选产品，并说明它为什么适合当前缺口")
                 ForEach(workspace.products) { product in
@@ -432,7 +428,6 @@ struct ProductComparisonView: View {
             }
             .padding(24)
         }
-        .scrollWheelKeepAlive()
         .background(InsurancePalette.background.ignoresSafeArea())
     }
 }
