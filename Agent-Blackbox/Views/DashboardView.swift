@@ -17,6 +17,7 @@ enum DashboardTimeRange: String, CaseIterable {
     }
 }
 
+
 struct DashboardView: View {
     @EnvironmentObject var database: DatabaseService
     @EnvironmentObject var proxyServer: ProxyServerService
@@ -34,6 +35,179 @@ struct DashboardView: View {
 
     @State private var viewMode: DistributionViewMode = .donut
     @State private var selectedProvider: LLMProvider? = nil
+    @State private var scrollPosition: Date = Date()
+
+    @State private var zoomLevelIndex: Int = 2
+
+    private var zoomSteps: [TimeInterval] {
+        switch timeRange {
+        case .today:
+            return [3600.0, 2.0 * 3600.0, 4.0 * 3600.0, 6.0 * 3600.0, 12.0 * 3600.0, 24.0 * 3600.0]
+        case .week:
+            return [12.0 * 3600.0, 24.0 * 3600.0, 2.0 * 24.0 * 3600.0, 4.0 * 24.0 * 3600.0, 7.0 * 24.0 * 3600.0]
+        case .month:
+            return [24.0 * 3600.0, 3.0 * 24.0 * 3600.0, 5.0 * 24.0 * 3600.0, 10.0 * 24.0 * 3600.0, 20.0 * 24.0 * 3600.0, 30.0 * 24.0 * 3600.0]
+        case .all:
+            let defaultSteps: [TimeInterval] = [2.0 * 24.0 * 3600.0, 5.0 * 24.0 * 3600.0, 7.0 * 24.0 * 3600.0, 14.0 * 24.0 * 3600.0, 30.0 * 24.0 * 3600.0, 90.0 * 24.0 * 3600.0]
+            if let firstDate = stats.modelTokensByDay.first?.date,
+               let lastDate = stats.modelTokensByDay.last?.date {
+                let span = lastDate.timeIntervalSince(firstDate)
+                var filtered = defaultSteps.filter { $0 < span }
+                if filtered.isEmpty {
+                    filtered.append(max(2.0 * 24.0 * 3600.0, span))
+                } else if filtered.last != span {
+                    filtered.append(span)
+                }
+                return filtered
+            }
+            return defaultSteps
+        }
+    }
+
+    private func defaultZoomIndex(for range: DashboardTimeRange) -> Int {
+        switch range {
+        case .today: return 1 // 2 hours
+        case .week: return 2  // 2 days
+        case .month: return 2 // 5 days
+        case .all: return 2   // 7 days
+        }
+    }
+
+    private var xVisibleDomainLength: TimeInterval {
+        let steps = zoomSteps
+        if zoomLevelIndex >= 0 && zoomLevelIndex < steps.count {
+            return steps[zoomLevelIndex]
+        }
+        return steps[min(2, steps.count - 1)]
+    }
+
+    private var xAxisDomain: ClosedRange<Date> {
+        let now = Date()
+        let startOfToday = Calendar.current.startOfDay(for: now)
+        
+        switch timeRange {
+        case .today:
+            let end = max(startOfToday.addingTimeInterval(24 * 3600), now)
+            return startOfToday...end
+        case .week:
+            let start = Calendar.current.date(byAdding: .day, value: -7, to: startOfToday) ?? startOfToday
+            return start...now
+        case .month:
+            let start = Calendar.current.date(byAdding: .day, value: -30, to: startOfToday) ?? startOfToday
+            return start...now
+        case .all:
+            if let firstDate = stats.modelTokensByDay.first?.date,
+               let lastDate = stats.modelTokensByDay.last?.date {
+                let span = lastDate.timeIntervalSince(firstDate)
+                if span < 7 * 24 * 3600 {
+                    let adjustedStart = Calendar.current.date(byAdding: .day, value: -7, to: lastDate) ?? firstDate
+                    return adjustedStart...lastDate
+                }
+                return firstDate...lastDate
+            }
+            let start = Calendar.current.date(byAdding: .day, value: -7, to: startOfToday) ?? startOfToday
+            return start...now
+        }
+    }
+
+    private var visibleMaxY: Double {
+        let length = xVisibleDomainLength
+        let start = scrollPosition
+        let end = scrollPosition.addingTimeInterval(length)
+        
+        let visiblePoints = stats.modelTokensByDay.filter { point in
+            point.date >= start && point.date <= end
+        }
+        
+        let maxVal = visiblePoints.map { Double($0.totalTokens) }.max() ?? 100.0
+        return maxVal * 1.15
+    }
+
+    private func clampScrollPosition(_ date: Date, length: TimeInterval) -> Date {
+        let domain = xAxisDomain
+        let minDate = domain.lowerBound
+        let maxDate = domain.upperBound
+        
+        var start = max(date, minDate)
+        if start.addingTimeInterval(length) > maxDate {
+            start = maxDate.addingTimeInterval(-length)
+        }
+        return max(start, minDate)
+    }
+
+    private func resetScrollPosition(for data: [ModelDayTokens]? = nil) {
+        let points = data ?? stats.modelTokensByDay
+        let targetScroll: Date
+        if let lastDate = points.last?.date {
+            targetScroll = lastDate.addingTimeInterval(-xVisibleDomainLength)
+        } else {
+            targetScroll = Date().addingTimeInterval(-xVisibleDomainLength)
+        }
+        scrollPosition = clampScrollPosition(targetScroll, length: xVisibleDomainLength)
+    }
+
+    private var canZoomIn: Bool {
+        zoomLevelIndex > 0
+    }
+    
+    private var canZoomOut: Bool {
+        zoomLevelIndex < zoomSteps.count - 1
+    }
+    
+    private func zoomIn() {
+        if zoomLevelIndex > 0 {
+            let oldLength = xVisibleDomainLength
+            let rightmostDate = scrollPosition.addingTimeInterval(oldLength)
+            
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                zoomLevelIndex -= 1
+                let newLength = xVisibleDomainLength
+                let targetScroll = rightmostDate.addingTimeInterval(-newLength)
+                scrollPosition = clampScrollPosition(targetScroll, length: newLength)
+            }
+        }
+    }
+    
+    private func zoomOut() {
+        let steps = zoomSteps
+        if zoomLevelIndex < steps.count - 1 {
+            let oldLength = xVisibleDomainLength
+            let rightmostDate = scrollPosition.addingTimeInterval(oldLength)
+            
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                zoomLevelIndex += 1
+                let newLength = xVisibleDomainLength
+                let targetScroll = rightmostDate.addingTimeInterval(-newLength)
+                scrollPosition = clampScrollPosition(targetScroll, length: newLength)
+            }
+        }
+    }
+
+    private func triggerRefreshAnimation() {
+        withAnimation(.easeInOut(duration: 0.2)) {
+            isRefreshing = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            withAnimation(.easeInOut(duration: 0.3)) {
+                isRefreshing = false
+            }
+        }
+    }
+
+    private var visibleTimeRangeString: String {
+        let length = xVisibleDomainLength
+        let start = scrollPosition
+        let end = scrollPosition.addingTimeInterval(length)
+        
+        let formatter = DateFormatter()
+        if timeRange == .today {
+            formatter.dateFormat = "HH:mm"
+            return "\(formatter.string(from: start)) - \(formatter.string(from: end))"
+        } else {
+            formatter.dateFormat = "MM-dd"
+            return "\(formatter.string(from: start)) 至 \(formatter.string(from: end))"
+        }
+    }
 
     var stats: DashboardStats { database.dashboardStats }
 
@@ -60,7 +234,7 @@ struct DashboardView: View {
                     providerDistribution
                         .frame(maxHeight: .infinity)
                 }
-                .frame(height: 440)
+                .frame(height: 480)
 
                 // Bottom row: Model chart + Live feed
                 HStack(spacing: 16) {
@@ -72,13 +246,30 @@ struct DashboardView: View {
                 .frame(height: 420)
             }
             .padding(20)
+            .opacity(isRefreshing ? 0.75 : 1.0)
+            .blur(radius: isRefreshing ? 0.8 : 0)
+            .animation(.easeInOut(duration: 0.25), value: isRefreshing)
         }
         .background(Color.dashboardBackground)
         .task {
             database.refreshDashboardStats(days: timeRange.dayValue)
+            zoomLevelIndex = defaultZoomIndex(for: timeRange)
+            withAnimation(.easeInOut(duration: 0.35)) {
+                resetScrollPosition()
+            }
         }
         .onChange(of: timeRange) { oldValue, newValue in
+            triggerRefreshAnimation()
             database.refreshDashboardStats(days: newValue.dayValue)
+            zoomLevelIndex = defaultZoomIndex(for: newValue)
+            withAnimation(.easeInOut(duration: 0.35)) {
+                resetScrollPosition()
+            }
+        }
+        .onChange(of: database.dashboardStats.modelTokensByDay) { oldValue, newValue in
+            withAnimation(.easeInOut(duration: 0.35)) {
+                resetScrollPosition(for: newValue)
+            }
         }
         .sheet(isPresented: $showPosterSheet) {
             SharePosterView()
@@ -271,6 +462,7 @@ struct DashboardView: View {
                 subtitle: "本地模型 (Ollama/LM Studio) 调用"
             )
         }
+        .animation(.spring(response: 0.45, dampingFraction: 0.8), value: stats.totalCalls)
     }
 
     // MARK: - Vulnerability & Anomaly Spotlights
@@ -310,6 +502,7 @@ struct DashboardView: View {
             }
             .fixedSize(horizontal: false, vertical: true)
         }
+        .animation(.spring(response: 0.45, dampingFraction: 0.8), value: stats.slowestLog)
     }
     
     @ViewBuilder
@@ -452,8 +645,58 @@ struct DashboardView: View {
 
     private var tokenTrendChart: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Token 使用趋势")
-                .font(.headline)
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Token 使用趋势")
+                        .font(.headline)
+                    Text("当前窗口: \(visibleTimeRangeString)")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                
+                Spacer()
+                
+                // Zoom Controls
+                HStack(spacing: 8) {
+                    Button(action: {
+                        zoomOut()
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "minus.magnifyingglass")
+                                .font(.system(size: 11, weight: .bold))
+                            Text("缩小")
+                                .font(.system(size: 10, weight: .medium))
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.primary.opacity(0.04))
+                        .cornerRadius(6)
+                        .foregroundStyle(canZoomOut ? Color.blue : Color.secondary.opacity(0.4))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!canZoomOut)
+                    .help("缩小：扩大时间范围，查看更长期的趋势")
+                    
+                    Button(action: {
+                        zoomIn()
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "plus.magnifyingglass")
+                                .font(.system(size: 11, weight: .bold))
+                            Text("放大")
+                                .font(.system(size: 10, weight: .medium))
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.primary.opacity(0.04))
+                        .cornerRadius(6)
+                        .foregroundStyle(canZoomIn ? Color.blue : Color.secondary.opacity(0.4))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!canZoomIn)
+                    .help("放大：缩小时间范围，查看更细致的趋势")
+                }
+            }
 
             if stats.modelTokensByDay.isEmpty {
                 emptyChartPlaceholder("暂无数据")
@@ -484,11 +727,16 @@ struct DashboardView: View {
                     .symbolSize(18)
                 }
                 .chartForegroundStyleScale(domain: uniqueModels, range: uniqueModels.map { colorForModel($0) })
+                .chartScrollableAxes(.horizontal)
+                .chartXScale(domain: xAxisDomain)
+                .chartXVisibleDomain(length: xVisibleDomainLength)
+                .chartScrollPosition(x: $scrollPosition)
+                .chartYScale(domain: 0.0...(max(10.0, visibleMaxY)))
                 .chartYAxis {
                     AxisMarks(position: .leading) { value in
                         AxisValueLabel {
-                            if let v = value.as(Int.self) {
-                                Text(v.formattedCompact)
+                            if let v = value.as(Double.self) {
+                                Text(Int(v).formattedCompact)
                                     .font(.caption2)
                             }
                         }
@@ -502,18 +750,20 @@ struct DashboardView: View {
                             AxisGridLine()
                         }
                     } else {
-                        let uniqueDaysCount = Set(stats.modelTokensByDay.map { $0.date }).count
-                        AxisMarks(values: .stride(by: .day, count: uniqueDaysCount > 10 ? 7 : 1)) { value in
+                        AxisMarks(values: .stride(by: .day, count: 1)) { value in
                             AxisValueLabel(format: .dateTime.month().day())
                             AxisGridLine()
                         }
                     }
                 }
                 .chartLegend(position: .top, alignment: .trailing)
+                .frame(height: 290)
+                .padding(.bottom, 12)
             }
         }
         .frame(maxHeight: .infinity)
         .cardStyle()
+        .animation(.spring(response: 0.45, dampingFraction: 0.85), value: stats.modelTokensByDay)
     }
 
     // MARK: - Provider Distribution
@@ -619,6 +869,9 @@ struct DashboardView: View {
         }
         .frame(minWidth: 320, maxHeight: .infinity)
         .cardStyle()
+        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: selectedProvider)
+        .animation(.spring(response: 0.45, dampingFraction: 0.8), value: stats.providerStats)
+        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: viewMode)
     }
 
     private func donutChartView(data: [ProviderDisplayData]) -> some View {
@@ -880,6 +1133,7 @@ struct DashboardView: View {
         }
         .frame(maxHeight: .infinity)
         .cardStyle()
+        .animation(.spring(response: 0.45, dampingFraction: 0.8), value: stats.callsByModel)
     }
 
     // MARK: - Live Feed
@@ -949,6 +1203,7 @@ struct DashboardView: View {
         }
         .frame(minWidth: 320, maxHeight: .infinity)
         .cardStyle()
+        .animation(.spring(response: 0.45, dampingFraction: 0.8), value: stats.recentLogs)
     }
 
     // MARK: - Helpers
