@@ -12,15 +12,10 @@ struct ClaudeCodeCLIParser: LogParser {
 
     func canParse(url: URL, content: String) -> Bool {
         guard url.path.contains(".claude") else { return false }
-        let name = url.lastPathComponent
-        return name == "history.jsonl"
-            || (url.pathExtension.lowercased() == "jsonl" && url.path.contains("/projects/"))
+        return url.pathExtension.lowercased() == "jsonl" && url.path.contains("/projects/")
     }
 
     func parse(url: URL, content: String) -> [ParsedLog] {
-        if url.lastPathComponent == "history.jsonl" {
-            return parseHistory(url: url, content: content)
-        }
         return parseSession(url: url, content: content)
     }
 

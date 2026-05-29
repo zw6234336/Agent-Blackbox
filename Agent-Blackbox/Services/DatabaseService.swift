@@ -187,6 +187,17 @@ final class DatabaseService: ObservableObject {
         } catch {
             Logger.shared.error("清理 Claude / history.jsonl custom 误判日志失败: \(error.localizedDescription)")
         }
+
+        // Clean up logs that incorrectly labeled "claude-code" as model name
+        do {
+            let cleanClaudeCodeModelQuery = """
+                DELETE FROM logs 
+                WHERE model_name = 'claude-code'
+            """
+            try db?.run(cleanClaudeCodeModelQuery)
+        } catch {
+            Logger.shared.error("清理 claude-code 误判模型日志失败: \(error.localizedDescription)")
+        }
     }
 
     // MARK: - Log CRUD

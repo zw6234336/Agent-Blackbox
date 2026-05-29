@@ -21,6 +21,14 @@ let package = Package(
             ],
             resources: [
                 .process("Resources")
+            ],
+            linkerSettings: [
+                .unsafeFlags([
+                    "-Xlinker", "-sectcreate",
+                    "-Xlinker", "__TEXT",
+                    "-Xlinker", "__info_plist",
+                    "-Xlinker", "Agent-Blackbox/Info.plist"
+                ])
             ]
         )
     ]
