@@ -84,6 +84,9 @@ struct ClaudeCodeCLIParser: LogParser {
             case "assistant":
                 guard let message else { continue }
                 let modelName = message["model"] as? String
+                if modelName == "<synthetic>" || modelName == "synthetic" {
+                    continue
+                }
                 let responseText = extractText(from: message["content"])
                 let usage = message["usage"] as? [String: Any]
                 let inputTokens = (usage?["input_tokens"] as? Int) ?? 0

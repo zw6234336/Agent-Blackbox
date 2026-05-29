@@ -56,16 +56,20 @@ struct DashboardView: View {
                 // Charts row
                 HStack(spacing: 16) {
                     tokenTrendChart
+                        .frame(maxHeight: .infinity)
                     providerDistribution
+                        .frame(maxHeight: .infinity)
                 }
-                .frame(minHeight: 330)
+                .frame(height: 440)
 
                 // Bottom row: Model chart + Live feed
                 HStack(spacing: 16) {
                     modelBarChart
+                        .frame(maxHeight: .infinity)
                     liveFeedSection
+                        .frame(maxHeight: .infinity)
                 }
-                .frame(minHeight: 280)
+                .frame(height: 420)
             }
             .padding(20)
         }
@@ -85,10 +89,41 @@ struct DashboardView: View {
     // MARK: - Header
 
     private var headerSection: some View {
-        HStack {
+        let isRunning = proxyServer.isRunning
+        return HStack {
             VStack(alignment: .leading, spacing: 4) {
-                Text("数字看板")
-                    .font(.system(size: 28, weight: .bold, design: .rounded))
+                HStack(spacing: 12) {
+                    Text("数字看板")
+                        .font(.system(size: 28, weight: .bold, design: .rounded))
+                    
+                    Button(action: {
+                        withAnimation {
+                            if isRunning {
+                                proxyServer.stop()
+                            } else {
+                                proxyServer.start()
+                            }
+                        }
+                    }) {
+                        HStack(spacing: 6) {
+                            Circle()
+                                .fill(isRunning ? Color.successGreen : Color.gray)
+                                .frame(width: 8, height: 8)
+                            Text(isRunning ? "网关运行中" : "网关未启动")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(isRunning ? .primary : .secondary)
+                            Image(systemName: "power")
+                                .font(.system(size: 10))
+                                .foregroundStyle(isRunning ? Color.errorRed : .secondary)
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Color.primary.opacity(0.04))
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help(isRunning ? "点击紧急关闭网关" : "点击快速启动网关")
+                }
                 Text("LLM 调用监控总览")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
@@ -132,102 +167,72 @@ struct DashboardView: View {
 
     // MARK: - Safety Control & Guard Banner
 
+    @ViewBuilder
     private var safetyGuardBanner: some View {
         let isRunning = proxyServer.isRunning
         let errorRate = stats.errorRate
         let hasPotentialLoop = stats.recentLogs.count >= 5 && stats.errorCount > 0 && errorRate > 15.0
         
-        return HStack(spacing: 16) {
-            // Pulsing status shield icon
-            ZStack {
-                Circle()
-                    .fill(isRunning ? (hasPotentialLoop ? Color.warningOrange.opacity(0.15) : Color.successGreen.opacity(0.15)) : Color.gray.opacity(0.15))
-                    .frame(width: 44, height: 44)
+        if hasPotentialLoop && isRunning {
+            HStack(spacing: 16) {
+                // Pulsing status shield icon
+                ZStack {
+                    Circle()
+                        .fill(Color.errorRed.opacity(0.15))
+                        .frame(width: 44, height: 44)
+                    
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.title2)
+                        .foregroundStyle(Color.errorRed)
+                }
+                .padding(.leading, 8)
                 
-                Image(systemName: isRunning ? "shield.fill" : "shield.slash.fill")
-                    .font(.title2)
-                    .foregroundStyle(isRunning ? (hasPotentialLoop ? Color.warningOrange : Color.successGreen) : Color.gray)
-            }
-            .padding(.leading, 8)
-            
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 8) {
-                    Text(isRunning ? "网关拦截防御罩已开启" : "网关拦截防御罩已关闭")
-                        .font(.headline)
-                    
-                    if isRunning {
-                        Text("运行中")
-                            .font(.system(size: 9, weight: .bold))
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.successGreen.opacity(0.15))
-                            .foregroundStyle(Color.successGreen)
-                            .clipShape(Capsule())
-                    } else {
-                        Text("未启动")
-                            .font(.system(size: 9, weight: .bold))
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.secondary.opacity(0.15))
-                            .foregroundStyle(.secondary)
-                            .clipShape(Capsule())
-                    }
-                    
-                    if hasPotentialLoop {
-                        Text("🚨 异常率偏高 · 请注意死循环风险")
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 8) {
+                        Text("死循环及高异常率风险告警")
+                            .font(.headline)
+                            .foregroundStyle(Color.errorRed)
+                        
+                        Text("🚨 疑似死循环风险")
                             .font(.system(size: 9, weight: .bold))
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
                             .background(Color.errorRed.opacity(0.15))
                             .foregroundStyle(Color.errorRed)
                             .clipShape(Capsule())
-                    } else if isRunning {
-                        Text("🛡️ 防护状态：安全")
-                            .font(.system(size: 9, weight: .bold))
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.infoBlue.opacity(0.15))
-                            .foregroundStyle(Color.infoBlue)
-                            .clipShape(Capsule())
                     }
+                    
+                    Text("当前网关调用异常率高达 \(errorRate.formattedPercent)，已发现 \(stats.errorCount) 个异常。建议紧急检查 AI 代理客户端的重复请求，以防止死循环造成高额费用。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 
-                Text(isRunning 
-                     ? "本地代理拦截器处于监听状态。AI 代理发送的 API 请求将被安全分发与限流拦截，防止高频重复调用死循环。" 
-                     : "当前处于网关直连或旁路模式，无法实时拦截代理死循环和统计最新速率配额。建议开启网关。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            
-            Spacer()
-            
-            // Switch toggle or buttons for emergency actions
-            VStack(alignment: .trailing, spacing: 6) {
+                Spacer()
+                
+                // Emergency Close Button
                 Button(action: {
-                    if isRunning {
+                    withAnimation {
                         proxyServer.stop()
-                    } else {
-                        proxyServer.start()
                     }
                 }) {
-                    Label(isRunning ? "紧急关闭网关" : "快速启动网关", systemImage: isRunning ? "power" : "play.fill")
+                    Label("紧急关闭网关", systemImage: "power")
                         .font(.subheadline)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(isRunning ? Color.errorRed : Color.successGreen)
+                .tint(Color.errorRed)
             }
+            .padding()
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(.ultraThinMaterial)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(Color.errorRed.opacity(0.3), lineWidth: 1)
+                    )
+            )
         }
-        .padding()
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(.ultraThinMaterial)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(isRunning ? (hasPotentialLoop ? Color.warningOrange.opacity(0.3) : Color.successGreen.opacity(0.2)) : Color.gray.opacity(0.15), lineWidth: 1)
-                )
-        )
     }
 
     // MARK: - Redesigned Metrics Grid
@@ -303,6 +308,7 @@ struct DashboardView: View {
                     emptyText: "暂无上下文日志"
                 )
             }
+            .fixedSize(horizontal: false, vertical: true)
         }
     }
     
@@ -353,6 +359,8 @@ struct DashboardView: View {
                     
                     Divider().opacity(0.3)
                     
+                    Spacer(minLength: 0)
+                    
                     if let prompt = log.prompt, !prompt.isEmpty {
                         Text(prompt.trimmingCharacters(in: .whitespacesAndNewlines))
                             .font(.system(size: 10, design: .monospaced))
@@ -380,7 +388,7 @@ struct DashboardView: View {
                 }
             }
             .padding()
-            .frame(maxWidth: .infinity, minHeight: 110)
+            .frame(maxWidth: .infinity, minHeight: 110, maxHeight: .infinity)
             .background(
                 RoundedRectangle(cornerRadius: 12)
                     .fill(.ultraThinMaterial)
@@ -504,6 +512,7 @@ struct DashboardView: View {
                 .chartLegend(position: .top, alignment: .trailing)
             }
         }
+        .frame(maxHeight: .infinity)
         .cardStyle()
     }
 
@@ -598,6 +607,8 @@ struct DashboardView: View {
                         .frame(height: 110)
                     }
 
+                    Spacer(minLength: 0)
+
                     // Spotlight Details Box (Shows details of selected provider, or the top provider by default)
                     let activeProvider = selectedProvider ?? data.first?.provider
                     if let activeProvider, let activeData = data.first(where: { $0.provider == activeProvider }) {
@@ -606,7 +617,7 @@ struct DashboardView: View {
                 }
             }
         }
-        .frame(minWidth: 320)
+        .frame(minWidth: 320, maxHeight: .infinity)
         .cardStyle()
     }
 
@@ -853,7 +864,7 @@ struct DashboardView: View {
                         .foregroundStyle(.secondary)
 
                     VStack(spacing: 10) {
-                        ForEach(Array(modelData.prefix(6).enumerated()), id: \.element.id) { index, item in
+                        ForEach(Array(modelData.prefix(8).enumerated()), id: \.element.id) { index, item in
                             ModelRankingRow(
                                 rank: index + 1,
                                 item: item,
@@ -867,6 +878,7 @@ struct DashboardView: View {
                 }
             }
         }
+        .frame(maxHeight: .infinity)
         .cardStyle()
     }
 
@@ -895,7 +907,7 @@ struct DashboardView: View {
                 emptyChartPlaceholder("暂无日志")
             } else {
                 VStack(spacing: 8) {
-                    ForEach(stats.recentLogs.prefix(6)) { log in
+                    ForEach(stats.recentLogs.prefix(8)) { log in
                         LiveFeedRow(log: log) {
                             NotificationCenter.default.post(name: Notification.Name("ShowLogDetailSheet"), object: log)
                         }
@@ -932,8 +944,10 @@ struct DashboardView: View {
                 }
                 .padding(.bottom, 4)
             }
+            
+            Spacer(minLength: 0)
         }
-        .frame(minWidth: 320)
+        .frame(minWidth: 320, maxHeight: .infinity)
         .cardStyle()
     }
 

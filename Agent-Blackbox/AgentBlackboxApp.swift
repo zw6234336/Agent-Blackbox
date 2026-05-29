@@ -44,12 +44,65 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
 
 
+    func applicationDidBecomeActive(_ notification: Notification) {
+        // After a long idle period (display sleep, App Nap, or just no user
+        // interaction for hours) scroll-wheel events stop working on ALL pages.
+        //
+        // There are three interacting causes:
+        //   1. SwiftUI's private NSWindow subclass intercepts scrollWheel events
+        //      in sendEvent and routes them to its internal gesture system; after
+        //      idle this routing layer becomes dormant.
+        //   2. macOS responsive scrolling (Mavericks+) decouples scroll event
+        //      handling into a secondary event loop that can be suspended by the
+        //      system during idle.
+        //   3. Momentum-phase / inertia scroll events may be routed through the
+        //      first-responder rather than hit-testing.
+        //
+        // This handler addresses all three layers:
+        DispatchQueue.main.async {
+            // Step 1: Re-make the main window key. This forces SwiftUI's
+            // private NSWindow subclass to re-initialise its event-routing
+            // state, unblocking the scrollWheel dispatch path.
+            if let window = NSApp.windows
+                .first(where: { $0.canBecomeKey && $0.title == "Agent Blackbox" }) {
+                window.makeKey()
+            }
+
+            // Step 2: Walk ALL visible windows and nudge every NSScrollView
+            // (including those hidden inside SwiftUI List/ScrollView) back to
+            // life.  Calling reflectScrolledClipView re-engages the responsive
+            // scrolling pipeline; the layout pass clears stale geometry.
+            for window in NSApp.windows where window.isVisible {
+                self.wakeUpScrollViews(in: window.contentView)
+                window.contentView?.needsLayout = true
+                window.contentView?.layoutSubtreeIfNeeded()
+            }
+        }
+    }
+
+    /// Recursively walks the view hierarchy and re-syncs every NSScrollView
+    /// found (including those buried inside SwiftUI's private NSView tree).
+    private func wakeUpScrollViews(in view: NSView?) {
+        guard let view = view else { return }
+        if let scrollView = view as? NSScrollView {
+            // Don't call reflectScrolledClipView on ResponsiveScrollView
+            // instances — they already handle themselves via notifications.
+            // But do call it for plain NSScrollView instances that SwiftUI
+            // List / ScrollView create internally.
+            if !(scrollView is ResponsiveScrollView) {
+                scrollView.reflectScrolledClipView(scrollView.contentView)
+            }
+        }
+        for subview in view.subviews {
+            wakeUpScrollViews(in: subview)
+        }
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         if let activity = appNapActivity {
             ProcessInfo.processInfo.endActivity(activity)
             appNapActivity = nil
         }
-
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

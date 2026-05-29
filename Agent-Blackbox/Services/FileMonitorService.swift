@@ -14,6 +14,11 @@ final class FileMonitorService: ObservableObject {
     private var filePatterns: [String] = ["*.log", "*.txt", "*llm*.json"]
     private var detectedLogSet: Set<URL> = []
 
+    // MARK: - Debounce
+    // 防止同一个文件在短时间内被多次重复解析（如 Cursor .vscdb 高频写入）
+    private var pendingParseTasks: [String: Task<Void, Never>] = [:]
+    private let parseDebounceInterval: TimeInterval = 2.0
+
     func bind(database: DatabaseService) {
         self.database = database
     }
@@ -87,6 +92,11 @@ final class FileMonitorService: ObservableObject {
         self.eventStream = nil
         isMonitoring = false
         detectedLogSet.removeAll(keepingCapacity: true)
+        // Cancel all pending parse tasks
+        for (_, task) in pendingParseTasks {
+            task.cancel()
+        }
+        pendingParseTasks.removeAll()
     }
 
     private func handleFileEvent(path: String, flags: FSEventStreamEventFlags) {
@@ -114,7 +124,15 @@ final class FileMonitorService: ObservableObject {
             }
         }
 
-        Task {
+        // Debounce: cancel any previously-scheduled parse for this file and
+        // schedule a new one.  This coalesces rapid-fire FSEvents for the same
+        // file (e.g. Cursor's .vscdb being written dozens of times per second)
+        // into a single parse after the writes settle.
+        pendingParseTasks[path]?.cancel()
+        pendingParseTasks[path] = Task {
+            try? await Task.sleep(nanoseconds: UInt64(parseDebounceInterval * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            pendingParseTasks.removeValue(forKey: path)
             let results = await parser.parseAllEntries(at: url)
             if !results.isEmpty {
                 await database?.saveLogs(results)

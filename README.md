@@ -1,6 +1,13 @@
 # Agent Blackbox
 
-An LLM Observability Gateway, Traffic Monitor & Budget Guard for Autonomous AI Agents (Cline, Claude Code, Cursor, Pi, etc.) on macOS.
+> LLM Observability Gateway · Traffic Monitor · Budget Guard  
+> **An open-source macOS native app for intercepting, logging, analyzing, and budgeting AI agent API calls.**
+
+---
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Platform: macOS 14+](https://img.shields.io/badge/Platform-macOS%2014%2B-informational)]()
+[![Swift 5.10](https://img.shields.io/badge/Swift-5.10-orange)]()
 
 ---
 
@@ -8,29 +15,67 @@ An LLM Observability Gateway, Traffic Monitor & Budget Guard for Autonomous AI A
 
 ---
 
-## English Version
+## Feature Overview
 
-### 🚀 Latest Updates (2024‑2026)
+| Category | Capability | Status |
+|----------|-----------|--------|
+| **Local Proxy Gateway** | HTTP(S) proxy on `127.0.0.1:9999`, auto-routes to 10+ cloud providers | ✅ |
+| **Static Log Parsing** | 14 parsers for log files / SQLite DBs from IDEs and CLIs | ✅ |
+| **Dashboard & Analytics** | Real-time metrics, charts, provider/model distribution | ✅ |
+| **Runaway Loop Detection** | Jaccard similarity + frequency-based alerts with one-click fuse | ✅ |
+| **Rate Limit / Quota Tracker** | Multi-provider RPM/TPM/daily/monthly monitoring with severity | ✅ |
+| **AI Daily Summary** | LLM-powered daily usage report generation (DeepSeek/OpenAI/Anthropic) | ✅ |
+| **Client Auto-Interception** | One-click proxy config for VS Code Cline/Cursor/Claude Code/Pi | ✅ |
+| **Plan Auto-Detection** | Auto-detect Copilot/Cursor/Claude/Z.AI subscription tiers | ✅ |
+| **Compilation / Export** | Combine logs into shareable compilations | ✅ |
+| **Collections / Favorites** | Bookmark and organize interesting logs | ✅ |
+| **Share Poster** | Generate visual usage summary images | ✅ |
+| **Desktop Floating Widget** | Always-on-top mini gateway status window | ✅ |
+| **Menu Bar Control** | Start/stop gateway and monitoring from menu bar | ✅ |
+| **Git Integration** | Track LLM usage per git commit | ✅ |
+| **Data Management** | Auto-backup, auto-prune, CSV/JSON export | ✅ |
+| **Sensitive Data Masking** | `maskAPIKey` / `maskEmail` / `sanitizeURL` across all paths | ✅ |
 
-- **Scrolling Bug Fixed** – Legacy `scrollWheelMonitor` and synthetic‑event timer have been removed. All vertical scrolling now uses a pure `NativeScrollView` wrapper with a custom `BoundedHostingView` to avoid the infamous `Invalid size {inf, …}` crash.
-- **Deterministic UUID Hardened** – IDs are now generated from a SHA‑256 hash of the prompt & response rather than embedding the raw strings, preventing accidental leakage through crash logs.
-- **API‑Key Storage Hardened** – User‑provided keys are no longer stored in plain `UserDefaults`. A lightweight Keychain wrapper (planned) will replace `@AppStorage` for secret handling.
-- **Security‑First Logging** – All token logging is limited to the first 4 characters (`prefix(4)`). The `maskAPIKey` utility now covers every DB write and network log path.
-- **Documentation Clean‑up** – Removed absolute local paths from `docs/data_flow.md` and stripped any possible metadata from screenshots.
-- **Dependency Audit** – The project uses only `SQLite.swift` (MIT) as an external dependency; all other modules are native Swift/SwiftUI.
+---
 
+## Architecture
 
-**Agent Blackbox** is a native macOS developer tool that intercepts, logs, and analyzes outgoing API calls from autonomous AI agents, coding assistants, and command-line scripts. By operating as a local proxy gateway, it provides real-time transparency, performance auditing, and critical runaway billing protection.
+```
+┌──────────────────────────────────────────────────────────────┐
+│                      AI Agents & IDEs                        │
+│  Claude Code · Cline · Cursor · Copilot · Pi · Warp · Amp   │
+│  Antigravity · Ollama · LM Studio · DeepSeek · Custom       │
+└───────────────────────────┬──────────────────────────────────┘
+                            │ HTTP(S) / Log Files / SQLite
+                            ▼
+┌──────────────────────────────────────────────────────────────┐
+│                     Agent Blackbox                           │
+│                                                              │
+│  ┌─────────────────┐  ┌──────────────────────────────────┐  │
+│  │  Proxy Gateway   │  │  File System Monitor (FSEvents)  │  │
+│  │  (NWListener)    │  │  + 14 Log Parsers                │  │
+│  │  :9999           │  │  + 7 SQLite DB Parsers           │  │
+│  └────────┬────────┘  └───────────────┬──────────────────┘  │
+│           │                           │                      │
+│           └───────────┬───────────────┘                      │
+│                       ▼                                      │
+│           ┌───────────────────────┐                          │
+│           │   SQLite Database     │  ← maskAPIKey / sanitize │
+│           │   (SQLite.swift)      │                          │
+│           └───────────┬───────────┘                          │
+│                       ▼                                      │
+│  ┌────────────────────────────────────────────────────────┐  │
+│  │                    SwiftUI Views                       │  │
+│  │  Dashboard · Logs · Proxy · Rate Limit · Summary · …   │  │
+│  └────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────┘
+```
 
-### Core Value Proposition
+---
 
-Autonomous AI agents (such as Cline, Claude Code, and Pi Agent) perform iterative workflows (coding, compiling, testing). If they fail to fix an error, they can fall into a high-frequency **infinite loop**, consuming millions of API tokens and costing hundreds of dollars in minutes. 
+## Gallery
 
-Agent Blackbox provides a local gateway sandbox that intercept these loops, estimates costs, visualizes traffic, and gives developers the tools to inspect payloads and enforce emergency limiters.
-
-### Gallery
-
-| Redesigned Dashboard | Log List & Inspector |
+| Dashboard | Proxy Gateway |
 | :---: | :---: |
 | ![Dashboard](docs/screenshots/main-view-dashboard.png) | ![Log List & Inspector](docs/screenshots/main-view-logs.png) |
 | **Directory Monitor** | **Analytics & Statistics** |
@@ -38,201 +83,294 @@ Agent Blackbox provides a local gateway sandbox that intercept these loops, esti
 
 ---
 
-### Key Features
+## Detailed Features
 
-#### 🔌 Native Client Interception (One-Click Handover)
-* Supports automatic proxy setting overrides for:
-  - **VS Code & Cursor Extensions**: Cline, Roo-Cline.
-  - **CLI Tools**: Claude Code (`claude`), Pi Agent (`pi`).
-* Provides a quick **Integration Guide** popover to easily route custom Python/Node.js scripts or `cURL` commands (`export HTTPS_PROXY=http://127.0.0.1:9999`).
+### 1. 🔌 Multi-Source Data Capture
 
-#### 🚨 Anti-Runaway Loop Guard & Emergency Fuse
-* **Loop Detection**: Monitors connection frequency in real-time. If a client triggers $>5$ requests in 15 seconds, a high-priority alarm flashes.
-* **Emergency Cutoff**: Features a one-click "Disconnect Interception" button inside the alarm card, immediately restoring the client's default configurations and shutting off further billing.
-* **Prompt Similarity Analyzer**: Compares consecutive prompt payloads using Jaccard Similarity and displays a colored line-by-line `+ / -` diff to pinpoint exactly why the agent is repeating itself.
+**Dynamic Proxy Gateway** (port `9999`):
+- Auto-detects the target provider from token format (`sk-ant-` → Anthropic, `sk-or-` → OpenRouter) or request body model name.
+- Routes to **10+ cloud providers**: OpenAI, Anthropic, Google Gemini, DeepSeek, Qwen (DashScope), Zhipu GLM, Kimi (Moonshot), OpenRouter, and custom endpoints.
+- Detects local models (MLX / GGUF / Ollama / LM Studio) and routes to `127.0.0.1:11434` or `:1234`.
+- Supports custom upstream via `x-upstream-url` / `openai-base-url` headers.
 
-#### 📊 Developer-Centric Dashboard & Time Range Persistence
-* **Safety Banner & Controls**: Display real-time loop risk warning and active shield status, along with an emergency gateway toggle button to shut down or start local listening.
-* **Persisted Filter Choice**: Defaults time range to "Today", and saves user filter selection using `@AppStorage` to prevent it from resetting during menu switching.
-* **Cost & Local Savings Focus**: Puts total estimated API cost and local Ollama route savings ($0.015 per call saved) front-and-center in the primary metrics grid.
-* **Vulnerability Spotlights**: Highlights the slowest latency call, the most expensive request, and the largest context payload in the active time window with inline prompt previews and single-click inspect sheets.
+**Static Log File Parsing** (14 parsers):
+| Parser | Source | Method |
+|--------|--------|--------|
+| ClaudeCodeCLIParser | Claude Code CLI | `~/.claude/` JSONL logs |
+| ClaudeDesktopParser | Claude Desktop | `~/Library/Logs/Claude/` |
+| ClineParser | Cline / Roo-Cline | VS Code `cline_messages.json` |
+| CursorLogParser | Cursor IDE | `~/Library/Application Support/Cursor/` |
+| CursorVSCDBParser | Cursor Chat | `state.vscdb` SQLite |
+| VSCodeCopilotParser | GitHub Copilot | Copilot `Favorites.sqlite` |
+| CopilotChatSessionParser | Copilot Chat | Session JSON |
+| CopilotChatSessionJSONLParser | Copilot Chat | JSONL variant |
+| PiParser | Pi Agent | `~/.pi/` JSON logs |
+| WarpParser | Warp Terminal | `/api/warp/v2` GraphQL response logs |
+| AmpThreadParser | Amp | Thread JSON |
+| AntigravityParser | Antigravity | Session JSON |
+| OllamaLogParser | Ollama | Server logs |
+| GenericLLMParser | Any | Key-value / JSON pattern matching |
 
-#### 📊 Session-Based Performance Charts (Slide Freezing)
-* **Visual Graph**: Displays token rate (Tokens/3s) and cost trends (USD) grouped by client with matching color palettes.
-* **Freezing on Idle**: If the gateway is idle for more than 30 seconds, the chart automatically pauses scrolling (`⏸ View Frozen`), preserving historical conversation peaks on the screen instead of letting them slide off-screen.
-* **Heartbeat Waveform**: Features a high-performance Canvas-based sinus wave that oscillates dynamically when connections are active and breathes slowly when idle.
+### 2. 🚨 Runaway Loop Detection & Emergency Fuse
 
-#### ⚡ Real-time Timeline Waterfall & Live Ticker
-* Color-coded request lists linked to the chart series.
-* **Live Ticker**: Displays real-time streaming snippets of prompts and response fragments inline for pending connections.
-* **Token Ratio Indicator**: A dual-colored bar showing the ratio of Input (Prompt) vs Output (Completion) tokens.
-* **Cost Tags**: Shows individual transaction costs (e.g., `+$0.0125`) or local badges (`Free (Local)` for Ollama).
+- **Frequency Monitor**: Triggers alert when a client sends >5 requests in 15 seconds.
+- **Jaccard Similarity**: Compares consecutive prompts; highlights when similarity > 85%.
+- **Line Diff View**: `SimpleDiffView` with colored `+/-` line-level diff to pinpoint the stuck prompt.
+- **One-Click Fuse**: "Disconnect" button instantly restores the client's original proxy config, stopping the loop.
 
-#### 🧪 Detail Inspector & Sandbox Playground
-* **Payload Decoders**: Highlights prompt and response payloads with syntax formatting and single-click copy.
-* **Sandbox & Replay**: Allows developers to resend and modify captured requests in a sandbox, measuring latency and server response directly.
+### 3. 📊 Dashboard & Analytics
+
+- **Time Range Filter**: Today / 24h / 7d / 30d, persisted via `@AppStorage`.
+- **Metrics Grid**: Total tokens, estimated cost, local savings, request count, unique models.
+- **Provider Distribution**: Donut chart + bar chart with brand colors per provider.
+- **Token Trend Chart**: Area chart showing token rate (Tokens/3s) over time.
+- **Spotlights**: Slowest latency, most expensive request, largest context payload.
+
+### 4. ⚡ Real-Time Proxy Dashboard
+
+- **Live Ticker**: Streaming prompt/response snippets inline for pending connections.
+- **Session Chart**: Token rate grouped by client (Pi / Cline / Claude Code / Custom) with matched color palettes.
+- **Chart Freeze**: Auto-pauses scrolling after 30s idle to preserve peaks on screen.
+- **Heartbeat Waveform**: Canvas-based sine wave that pulses when active, breathes when idle.
+- **Token Ratio Bar**: Dual-color bar showing Input vs Output token split.
+- **Cost Tags**: Per-request estimated cost (e.g. `+$0.0125`) or `Free (Local)` badge.
+
+### 5. 🧪 Detail Inspector & Sandbox Replay
+
+- **Payload Viewer**: Syntax-formatted prompt and response with one-click copy.
+- **Sandbox Replay**: Modify and resend captured requests to test upstream latency.
+
+### 6. 📈 Rate Limit / Quota Tracker
+
+- **Multi-Window Monitoring**: RPM (1min), TPM (1min), hourly requests/tokens, daily tokens, monthly requests.
+- **Severity Levels**: Normal / Warning / Critical based on configurable thresholds.
+- **Provider Defaults**: Built-in limits for OpenAI, Anthropic, Copilot Pro, Cursor Pro, Claude Consumer/Pro, Z.AI Coding, Antigravity, Warp, Local.
+- **Plan Auto-Detection**: Automatically detects active subscription tier for Copilot, Cursor, Claude Desktop, Claude Code, Z.AI (via Pi config), Antigravity.
+
+### 7. 🤖 AI-Powered Daily Summary
+
+- **LLM Integration**: Sends anonymized usage statistics to DeepSeek / OpenAI / Anthropic to generate a natural-language daily report.
+- **Markdown Rendering**: Built-in Markdown block/table/code renderer for the report.
+- **Configurable Provider**: User selects which LLM provider + model + API key to use.
+
+### 8. 🗂️ Collections & Compilation
+
+- **Collections**: Bookmark and organize interesting logs into named folders with descriptions.
+- **Compilation**: Combine multiple logs into a single shareable document with start/pause/resume/cancel lifecycle.
+
+### 9. 📤 Share Poster
+
+- **Visual Summary**: Generate a styled PNG image with key stats, charts, and branding.
+- **Export**: Copy to clipboard or save to disk.
+
+### 10. 🖥️ System Integration
+
+- **Menu Bar Control**: Start/stop gateway and monitoring, view status, toggle floating widget — all from the menu bar.
+- **Desktop Floating Widget**: Always-on-top mini window showing gateway status and live request count.
+- **Git Integration**: Track LLM token usage attributed to specific git commits.
+- **Client Auto-Interception**: One-click proxy override for:
+  - VS Code Cline / Roo-Cline
+  - Cursor Cline / Roo-Cline
+  - Claude Code CLI
+  - Pi Agent
+- **Auto-Backup**: Scheduled database backups with configurable retention.
+- **Auto-Prune**: Automatically clean logs older than N days.
 
 ---
 
-### Technology Stack
-* **Core**: Swift 5.10 / SwiftUI
-* **Network Interceptor**: Apple Network framework `NWListener` for local socket proxying.
-* **Charts**: Swift Charts (`AreaMark`, `LineMark` with gradient fills).
-* **Database**: `SQLite.swift` for lightweight local logging and historical usage aggregation. Heavily optimized using Swift `async/await` and background queue offloading to guarantee stutter-free 60fps UI scrolling.
+## Technology Stack
+
+| Component | Technology |
+|-----------|-----------|
+| Language | Swift 5.10 |
+| UI Framework | SwiftUI + AppKit (NativeScrollView via NSScrollView) |
+| Network | Apple Network framework (`NWListener`) |
+| Charts | Swift Charts (`AreaMark`, `LineMark`, `PieMark`) |
+| Database | SQLite via [SQLite.swift](https://github.com/stephencelis/SQLite.swift) (MIT) |
+| Concurrency | Swift `async/await`, `Task`, `@MainActor` |
+| File Monitoring | macOS FSEvents |
+| Security | `maskAPIKey` regex sanitizer, `prefix(4)` token logging |
 
 ---
 
-### File Structure
+## Project Structure
+
 ```
 Agent-Blackbox/
-├── Agent-Blackbox/
-│   ├── AgentBlackboxApp.swift        # Main App entry and Lifecycle management
-│   ├── ContentView.swift             # Sidebar navigation
-│   ├── Models/
-│   │   ├── LLMProvider.swift         # LLM Brand Color, Icons, and Log paths
-│   │   ├── LogEntry.swift            # Database schema mapping
-│   │   ├── MonitorConfig.swift       # Decodable local configurations
-│   │   └── DashboardStats.swift      # Statistical data holders
-│   ├── Services/
-│   │   ├── ProxyServerService.swift  # Socket proxy listener, routing, & rewriting
-│   │   ├── ClientInterceptionService.swift # Configuration files rewriter
-│   │   ├── LogParserService.swift    # Router parser
-│   │   └── FileMonitorService.swift  # File system logging observer
-│   └── Views/
-│       ├── ProxyDashboardView.swift  # Overhauled Gateway Dashboard View
-│       ├── DashboardView.swift       # General Analytics Dashboard
-│       └── SettingsView.swift        # Monitored directory and toggle configuration
+├── AgentBlackboxApp.swift          # App entry, lifecycle, menu bar
+├── ContentView.swift               # Sidebar navigation (9 pages)
+├── Models/
+│   ├── LLMProvider.swift           # 19 providers enum + brand colors/icons
+│   ├── LogEntry.swift              # ParsedLog schema + DB mapping
+│   ├── MonitorConfig.swift         # Full app configuration (Codable)
+│   ├── DashboardStats.swift        # Statistical aggregates
+│   ├── RateLimit.swift             # Quota thresholds + severity model
+│   ├── Collection.swift            # Log collection model
+│   ├── Compilation.swift           # Log compilation lifecycle
+│   └── InsuranceDomain.swift       # Insurance planner demo data
+├── Services/
+│   ├── ProxyServerService.swift    # NWListener proxy + auto-routing
+│   ├── ClientInterceptionService.swift  # Auto config rewrite for 6 clients
+│   ├── PlanDetectionService.swift  # Auto-detect subscription tiers
+│   ├── DatabaseService.swift       # SQLite CRUD + WAL optimization
+│   ├── FileMonitorService.swift    # FSEvents directory watcher
+│   ├── LogParserService.swift      # Parser routing dispatcher
+│   ├── ConfigService.swift         # JSON config load/save
+│   ├── RateLimitTrackerService.swift    # Real-time quota monitoring
+│   ├── CompilationService.swift    # Log compilation lifecycle
+│   ├── DailySummaryService.swift   # LLM-powered daily report
+│   ├── DesktopWidgetService.swift  # Floating window controller
+│   ├── GitIntegrationService.swift # Git commit ↔ LLM usage tracking
+│   └── Parsers/                    # 14 log format parsers
+│       ├── LogParserProtocol.swift # Base protocol + maskAPIKey
+│       ├── ClaudeCodeCLIParser.swift
+│       ├── ClaudeDesktopParser.swift
+│       ├── ClineParser.swift
+│       ├── CursorLogParser.swift
+│       ├── CursorVSCDBParser.swift
+│       ├── VSCodeCopilotParser.swift
+│       ├── CopilotChatSessionParser.swift
+│       ├── CopilotChatSessionJSONLParser.swift
+│       ├── PiParser.swift
+│       ├── WarpParser.swift
+│       ├── AmpThreadParser.swift
+│       ├── AntigravityParser.swift
+│       ├── OllamaLogParser.swift
+│       └── GenericLLMParser.swift
+├── Views/
+│   ├── DashboardView.swift         # Overview dashboard + charts
+│   ├── ProxyDashboardView.swift    # Real-time gateway monitor
+│   ├── LogListView.swift           # Filterable log list
+│   ├── LogDetailView.swift         # Payload inspector
+│   ├── LogLocationView.swift       # Log source file browser
+│   ├── RateLimitView.swift         # Quota monitoring dashboard
+│   ├── DailySummaryView.swift      # AI daily report viewer
+│   ├── MonitorView.swift           # File system monitor status
+│   ├── CollectionView.swift        # Log collections manager
+│   ├── CompilationView.swift       # Log compilation manager
+│   ├── SharePosterView.swift       # Visual poster generator
+│   ├── StatisticsView.swift        # Advanced analytics
+│   ├── InsurancePlannerViews.swift # Insurance planner demo
+│   ├── SettingsView.swift          # Full settings panel
+│   └── Components.swift            # Shared UI components
+└── Utils/
+    ├── ScrollWheelForwarder.swift  # NativeScrollView (NSScrollView wrapper)
+    ├── Logger.swift                # Unified logging
+    └── Extensions.swift            # SHA-256, UUID helpers
 ```
 
 ---
 
-### Getting Started
+## Getting Started
 
-#### Prerequisites
-* macOS 14.0 or higher.
-* Xcode 15.0+ installed (for Swift Compiler & SwiftUI support).
+### Prerequisites
+- macOS 14.0 (Sonoma) or higher
+- Xcode 15.0+ (for Swift Compiler & SwiftUI support)
 
-#### Build and Run
-To compile and launch the application locally via Command Line:
+### Build and Run
 ```bash
-# Build the project
+# Clone
+git clone https://github.com/zw6234336/Agent-Blackbox.git
+cd Agent-Blackbox
+
+# Build
 swift build
 
-# Run the executable
+# Run
 swift run
 ```
-Or simply open the directory in Xcode, select the `Agent-Blackbox` scheme, and hit `Cmd + R` to build and run.
+Or open in Xcode → select `Agent-Blackbox` scheme → `Cmd + R`.
 
-#### ⚙️ Configuring VS Code / Cursor AI Clients
+### ⚙️ Configuring AI Clients
 
-You can route your VS Code AI extensions through the Agent Blackbox local proxy using two methods:
-
-##### Method A: Automatic Handover (Recommended)
+#### Method A: Automatic (Recommended)
 1. Launch **Agent Blackbox**.
-2. Go to **Settings** -> **Client Interception** (or use the toggle panel on the right side of the dashboard).
-3. Toggle on **VS Code - Cline** or **VS Code - Roo-Cline**.
-4. The application will automatically overwrite your local settings file to point the base URL to `http://127.0.0.1:9999/v1` and set a placeholder API key.
-5. On exit, Agent Blackbox will automatically restore your original config files.
+2. Go to **Settings → Client Interception**.
+3. Toggle on your client (VS Code Cline / Cursor Cline / Claude Code / Pi).
+4. The app auto-rewrites the client's config to point to `http://127.0.0.1:9999/v1`.
+5. On app exit, original configs are automatically restored.
 
-##### Method B: Manual Configuration
-If automatic file access is blocked by macOS Sandbox permissions:
-1. Open **VS Code** (or **Cursor**).
-2. Open settings for your extension (e.g. **Cline** or **Roo-Cline**).
-3. Set the **API Provider** to **OpenAI Compatible**.
-4. Configure the **Base URL** to:
-   ```
-   http://127.0.0.1:9999/v1
-   ```
-5. Enter any placeholder text for the **API Key** (e.g., `agent-blackbox-proxy`).
-6. Set the **Model ID** to your preferred model (e.g., `claude-3-5-sonnet` or `gpt-4o` or `deepseek-chat`). The gateway will automatically intercept the request, extract the model ID, and forward it to the correct upstream endpoint.
+#### Method B: Manual
+Set your AI tool's base URL / API endpoint to:
+```
+http://127.0.0.1:9999/v1
+```
+Use any placeholder for the API key (e.g. `agent-blackbox-proxy`). The gateway will auto-route based on the model name in the request body.
+
+### 🔧 Supported Auto-Detection Models
+
+| Keyword | Provider | Endpoint |
+|---------|----------|----------|
+| `claude` / `anthropic` | Anthropic | `api.anthropic.com` |
+| `gpt` / `o1` / `o3` | OpenAI | `api.openai.com` |
+| `gemini` | Google | `generativelanguage.googleapis.com` |
+| `deepseek` | DeepSeek | `api.deepseek.com` |
+| `qwen` | Alibaba DashScope | `dashscope.aliyuncs.com` |
+| `glm-` / `zhipu` | Zhipu AI | `open.bigmodel.cn` |
+| `kimi` / `moonshot` | Moonshot | *(via custom upstream)* |
+| `ollama` / `gguf` / `mlx` | Local | `127.0.0.1:11434` / `:1234` |
+| `sk-or-*` token | OpenRouter | `openrouter.ai/api` |
+| `x-upstream-url` header | Custom | User-specified |
+
+---
+
+## Security
+
+- **No credentials in source**: Zero hardcoded API keys, tokens, or emails.
+- **Masking on write**: `maskAPIKey()` sanitizes all data before DB insertion.
+- **Token logging**: Only first 4 characters (`prefix(4)`) ever printed.
+- **No iCloud sync**: All data stays local on your machine.
+- **App Nap disabled**: Ensures responsive monitoring even after idle.
+- See [SECURITY.md](SECURITY.md) for vulnerability reporting.
+
+---
+
+## License
+
+[MIT License](LICENSE) — free for personal and commercial use.
 
 ---
 
 ## 简体中文版
 
-**Agent Blackbox** 是一款原生的 macOS 开发者工具，专门用于拦截、记录和分析自治 AI 代理、编程助手和命令行脚本的 API 外部请求。通过作为本地代理网关运行，它提供了实时的连接透明度、性能审计和关键的**资费防跑飞保护**。
+> **Agent Blackbox** 是一款 macOS 原生开源工具，通过本地代理网关拦截、记录和分析 AI 代理的 API 调用，提供实时流量可视化、死循环熔断、配额追踪和每日 AI 复盘。
 
-### 核心业务价值
+### 核心亮点
 
-自治 AI 代理（如 Cline、Claude Code 和 Pi Agent）在执行“编写-编译-测试”的循环任务时，一旦遇到无法解决的编译错误，极易陷入高频重复相同的 **死循环**，在数分钟内瞬间烧掉数百万 Token 和数百美元的云端账单。
+| 能力 | 说明 |
+|------|------|
+| **双通道采集** | 动态代理网关 (`:9999`) + 14 个静态日志解析器，覆盖 Claude Code / Cursor / Copilot / Cline / Pi / Warp / Amp 等 |
+| **智能路由** | 根据 Token 格式或模型名自动转发到 OpenAI / Anthropic / Gemini / DeepSeek / 通义 / 智谱 / OpenRouter 等 10+ 厂商 |
+| **死循环熔断** | 频率监控 + Jaccard 相似度 + 行级 Diff，一键切断跑飞 Agent |
+| **配额追踪** | 多维度实时监控 RPM / TPM / 小时 / 天 / 月配额使用情况，自动检测 Copilot / Cursor / Claude / Z.AI 套餐档位 |
+| **AI 每日复盘** | 调用 LLM（DeepSeek / OpenAI / Anthropic）自动生成 Markdown 格式的每日使用报告 |
+| **客户端接管** | 一键修改 VS Code Cline / Cursor Cline / Claude Code / Pi 的代理配置，退出时自动恢复 |
+| **数据安全** | `maskAPIKey` 脱敏入库，Token 日志仅显示前 4 位，零硬编码凭证 |
 
-Agent Blackbox 提供了一个本地网关沙盒，实时捕获此类死循环，进行资费估算，以可视化曲线反映吞吐趋势，并在异常发生时提供“一键熔断”手段保护开发者资金安全。
+### 快速开始
 
-### 界面预览
+```bash
+git clone https://github.com/zw6234336/Agent-Blackbox.git
+cd Agent-Blackbox
+swift build && swift run
+```
 
-| 开发者自研看板 (Dashboard) | 日志列表与详情解析 |
-| :---: | :---: |
-| ![Dashboard](docs/screenshots/main-view-dashboard.png) | ![Log List & Inspector](docs/screenshots/main-view-logs.png) |
-| **本地目录监控 (Monitor)** | **会话冷冻图表与统计 (Analytics)** |
-| ![Directory Monitor](docs/screenshots/main-view-monitor.png) | ![Analytics & Statistics](docs/screenshots/main-view-statistics.png) |
+在 AI 工具中将 API 地址设置为 `http://127.0.0.1:9999/v1`，网关将自动识别并路由。
 
----
+### 侧边栏页面一览
 
-### 核心功能
-
-#### 🔌 原生客户端接管 (一键托管)
-* 支持自动修改配置文件以劫持：
-  - **VS Code 与 Cursor 插件**：Cline, Roo-Cline。
-  - **命令行工具**：Claude Code (`claude`), Pi Agent (`pi`)。
-* 顶部集成**配置指引**，为自定义 Python/Node.js 脚本或 `cURL` 命令行提供一键拷贝的 HTTPS 代理变量配置 (`export HTTPS_PROXY=http://127.0.0.1:9999`)。
-
-#### 🚨 死循环防跑飞警报与紧急熔断
-* **死循环诊断**：网关实时监控请求频次，当检测到同一客户端在 15 秒内发起 5 次及以上高频请求时，亮起红色高危警报。
-* **紧急熔断器**：报警卡片中包含“切断托管”按钮，点击即可瞬间恢复该客户端的默认代理配置，在网关侧掐断 AI 的无限循环以停止扣费。
-* **提示词相似度分析**：通过 Jaccard 词袋相似度对比相邻的 Prompt Payload。当相似度 $>85\%$ 时触发高亮，并提供 `SimpleDiffView`，以红/绿、`+/-` 符号直观展示前后 Prompt 的行级差异，秒级揪出死循环元凶。
-
-#### 📊 开发者自研看板与持久化时间选择 (Redesigned Dashboard)
-* **安全横幅与紧急开关**：显示死循环高危预警与网关防御罩开启状态，并提供一键紧急启动/关闭本地网关代理的控制按钮。
-* **持久化时间过滤**：将时间范围默认值设为“当天”，并采用 `@AppStorage` 进行偏好固定，在侧边栏页面切换时保留选择。
-* **资费与本地节省聚焦**：在最显著的指标卡处展示累计花费以及通过 Ollama 等本地路由节省的金额（每次按 0.015 美元估算）。
-* **极值与异常曝光 (Spotlights)**：以三栏卡片将过滤时间段内的“最慢延迟请求”、“最高单次计费”以及“最大上下文 Payload”直接提取展示，支持点击一键弹窗查看 Payload 详情。
-
-#### 📊 会话闲置冷冻图表 (Visual Chart) —— 消除数据空白焦虑
-* **性能曲线**：以不同客户端的主题色（如 Pi-粉色、Cline-橙色）分类展示 Token 吞吐率 (T/3s) 或资费消耗 (USD) 曲线。
-* **会话冷冻模式**：如果网关检测到 30 秒内没有任何新请求，时间轴将自动停止向左滚动（进入 `⏸ 视图静止` 状态），完整保留上一次的波动波峰。当新请求到来时图表自动唤醒并继续推进，完美解决闲置时数据清空变平的痛点。
-* **示波波形**：顶部增加由 Canvas 渲染的正弦呼吸波形，当流式连接活动时波形快速振幅跳动，闲置时变为舒缓低幅的线条，大幅增强界面的“活体感”。
-
-#### ⚡ 实时连接 timeline 与流式 Ticker
-* 与图表色系完美对应、一目了然的流水列表。
-* **流式 Answer Ticker**：在请求处于 `isPending`（流式输出中）时，列表行直接以跑马灯文本展示 AI 正在吐出的最新文字片段。
-* **Token 比率分配条**：精细的双色微型条，展示 Prompt (蓝) 与 Completion (紫) 占比。
-* **扣费标签**：明码标价，显示此条请求的预估美分（本地 Ollama 显示为 `本地免费` 绿色徽章）。
-
-#### 🧪 详情解析器与沙盒重放
-* **载荷解析**：对解码出的 Prompt 和 Response 进行规范排版，支持一键复制代码。
-* **沙盒重放 (Sandbox & Replay)**：支持在本地沙盒中直接修改并“重新发送”捕获到的请求，方便开发人员直接测试代理网关的转发可用性及上游响应延迟。
-
----
+| 页面 | 功能 |
+|------|------|
+| 📊 **看板** | 总览仪表盘：Token 趋势、Provider 分布、极值曝光 |
+| 📋 **日志** | 全量日志列表：搜索、筛选、收藏、详情弹窗 |
+| ⭐ **收藏** | 日志收藏夹：按主题归类整理 |
+| 📝 **编译** | 日志合集：合并导出、生命周期管理 |
+| 📈 **今日复盘** | AI 生成每日报告：Markdown 渲染、多模型切换 |
+| ⚡ **速率/配额** | 多维度配额监控：RPM/TPM/天/月，套餐自动检测 |
+| 🛡️ **代理监控** | 实时网关仪表盘：流水线、流式 Ticker、心跳波形 |
+| 👁 **监控** | 文件系统监控状态：检测到的日志文件列表 |
+| ⚙️ **设置** | 完整配置面板：监控目录、网关端口、备份、清理、客户端接管 |
 
 ### 技术栈
-* **核心框架**：Swift 5.10 / SwiftUI
-* **网关拦截**：基于 Network 框架 `NWListener` 实现高并发的本地 TCP/HTTP 套接字代理。
-* **图表库**：Swift Charts (采用 `.linearGradient` 渐变填充 AreaMark 与 LineMark)。
-* **数据存储**：`SQLite.swift` 驱动的本地轻量级数据库，用于日志持久化及资费分析聚合。经 `async/await` 与后台队列异步化重构，确保在大体量数据库下界面滑动流畅无卡顿。
 
----
-
-### 快速使用与配置
-
-#### ⚙️ 在 VS Code / Cursor 中配置代理
-
-您可以通过以下两种方式将 VS Code 中的 AI 插件流量接入到 Agent Blackbox：
-
-##### 方法一：自动一键托管（推荐）
-1. 启动 **Agent Blackbox** 客户端。
-2. 进入 **设置 (Settings)** -> **客户端接管 (Client Interception)** 面板（或者直接使用 Dashboard 右侧的“快捷接管控制”面板）。
-3. 开启 **VS Code - Cline** 或 **VS Code - Roo-Cline** 开关。
-4. 本应用将自动修改目标插件的配置文件，将 API 提供商重定向至本地网关 `http://127.0.0.1:9999/v1`。
-5. 当您退出 Agent Blackbox 时，程序会自动恢复您原本的配置文件备份，实现完全无感接入。
-
-##### 方法二：手动修改配置 (备用)
-如果由于 macOS 系统沙盒（Sandbox）或文件读写权限受限导致自动修改失败：
-1. 打开 **VS Code** (或 **Cursor**)。
-2. 打开 **Cline** 或 **Roo-Cline** 的设置页面。
-3. 将 **API Provider**（API 提供商）切换为 **OpenAI Compatible** (或 OpenRouter)。
-4. 将 **Base URL** 设置为本地网关地址：
-   ```
-   http://127.0.0.1:9999/v1
-   ```
-5. **API Key** 处填写任意占位符（如 `agent-blackbox-proxy`）。
-6. **Model ID**（模型名称）处填写您需要调用的真实模型（例如 `claude-3-5-sonnet`、`gpt-4o` 或 `deepseek-chat`）。网关接收到请求后，会自动智能解析并选择正确的云端 API 上游进行路由转发。
+Swift 5.10 · SwiftUI · Apple Network (NWListener) · Swift Charts · SQLite.swift · FSEvents · `async/await`

@@ -161,6 +161,17 @@ final class DatabaseService: ObservableObject {
         } catch {
             Logger.shared.error("历史误判日志清理失败: \(error.localizedDescription)")
         }
+
+        // Clean up synthetic model logs which pollute the dashboard statistics
+        do {
+            let cleanSyntheticQuery = """
+                DELETE FROM logs 
+                WHERE model_name = '<synthetic>' OR model_name = 'synthetic'
+            """
+            try db?.run(cleanSyntheticQuery)
+        } catch {
+            Logger.shared.error("清理 synthetic 日志失败: \(error.localizedDescription)")
+        }
     }
 
     // MARK: - Log CRUD
@@ -1083,7 +1094,8 @@ final class DatabaseService: ObservableObject {
                             OR LOWER(model_name) IN ('n_ctx','n_batch','n_gpu_layers','n_threads',
                                 'rope_freq_base','rope_freq_scale','filenotfounderror','valueerror',
                                 'typeerror','runtimeerror','indexerror','keyerror','modulenotfounderror',
-                                'permissionerror','true','false','none','null','openaichatmodel.builder')
+                                'permissionerror','true','false','none','null','openaichatmodel.builder',
+                                '<synthetic>', 'synthetic')
                             OR (model_name GLOB '[0-9]*\\.[0-9]*' AND model_name NOT GLOB '*[^0-9.]*')
                           )
                     """

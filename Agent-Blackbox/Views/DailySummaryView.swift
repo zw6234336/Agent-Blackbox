@@ -462,7 +462,7 @@ struct DailySummaryView: View {
                             .cornerRadius(8)
                             .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
                     } else {
-                        ScrollView {
+                        NativeScrollView {
                             VStack(alignment: .leading, spacing: 12) {
                                 ForEach(parseMarkdown(service.summaryText)) { block in
                                     MarkdownBlockView(block: block)
