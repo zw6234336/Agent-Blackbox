@@ -875,17 +875,35 @@ struct DashboardView: View {
     }
 
     private func donutChartView(data: [ProviderDisplayData]) -> some View {
-        Chart(data) { item in
-            SectorMark(
-                angle: .value("数值", item.displayValue),
-                innerRadius: .ratio(0.55),
-                angularInset: 1.5
-            )
-            .foregroundStyle(item.provider.brandColor)
-            .cornerRadius(4)
-            .opacity(selectedProvider == nil || selectedProvider == item.provider ? 1.0 : 0.35)
+        // Guard: SectorMark crashes (EXC_BREAKPOINT in Charts/acos) when all values are zero
+        let safeData = data.contains(where: { $0.displayValue > 0 }) ? data : []
+        return Group {
+            if safeData.isEmpty {
+                // Compact placeholder: emptyChartPlaceholder enforces minHeight: 120, but this view is shown in a 110×110 frame.
+                VStack {
+                    Spacer()
+                    Image(systemName: "chart.bar.xaxis")
+                        .font(.title2)
+                        .foregroundStyle(.tertiary)
+                    Text("暂无数据")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                    Spacer()
+                }
+            } else {
+                Chart(safeData) { item in
+                    SectorMark(
+                        angle: .value("数值", item.displayValue),
+                        innerRadius: .ratio(0.55),
+                        angularInset: 1.5
+                    )
+                    .foregroundStyle(item.provider.brandColor)
+                    .cornerRadius(4)
+                    .opacity(selectedProvider == nil || selectedProvider == item.provider ? 1.0 : 0.35)
+                }
+                .chartLegend(.hidden)
+            }
         }
-        .chartLegend(.hidden)
     }
 
     private func legendRow(item: ProviderDisplayData) -> some View {
