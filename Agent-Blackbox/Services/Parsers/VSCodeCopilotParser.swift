@@ -38,7 +38,7 @@ struct VSCodeCopilotParser: LogParser {
                 copiedShm = true
             }
         } catch {
-            print("Failed to copy VSCode Copilot DB to temporary location: \(error.localizedDescription)")
+            Logger.shared.error("Failed to copy VSCode Copilot DB to temporary location: \(error.localizedDescription)")
             return []
         }
         
@@ -93,7 +93,7 @@ struct VSCodeCopilotParser: LogParser {
                 }
             }
         } catch {
-            print("Failed to parse copied VSCode Copilot DB: \(error.localizedDescription)")
+            Logger.shared.error("Failed to parse copied VSCode Copilot DB: \(error.localizedDescription)")
         }
         
         return results

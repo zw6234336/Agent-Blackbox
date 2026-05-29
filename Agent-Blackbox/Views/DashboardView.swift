@@ -243,7 +243,7 @@ struct DashboardView: View {
                     liveFeedSection
                         .frame(maxHeight: .infinity)
                 }
-                .frame(height: 420)
+                .frame(height: 460)
             }
             .padding(20)
             .opacity(isRefreshing ? 0.75 : 1.0)

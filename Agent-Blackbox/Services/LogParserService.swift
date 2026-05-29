@@ -43,14 +43,23 @@ final class LogParserService: Sendable {
             return []
         }
 
+        // 优先匹配特定工具的解析器（非 GenericLLMParser）
         for parser in parsers {
-            if parser.canParse(url: url, content: content) {
-                let results = parser.parse(url: url, content: content)
-                if !results.isEmpty {
-                    return results
+            if !(parser is GenericLLMParser) {
+                if parser.canParse(url: url, content: content) {
+                    // 如果特定解析器匹配了，不管解析出几条（哪怕是0条），都直接返回其结果
+                    // 避免 fallback 到 GenericLLMParser 提取出噪声数据
+                    return parser.parse(url: url, content: content)
                 }
             }
         }
+        
+        // 没有特定解析器匹配时，才使用 GenericLLMParser 进行兜底
+        if let fallback = parsers.first(where: { $0 is GenericLLMParser }),
+           fallback.canParse(url: url, content: content) {
+            return fallback.parse(url: url, content: content)
+        }
+        
         return []
     }
 }

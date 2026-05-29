@@ -172,6 +172,21 @@ final class DatabaseService: ObservableObject {
         } catch {
             Logger.shared.error("清理 synthetic 日志失败: \(error.localizedDescription)")
         }
+
+        // Clean up misclassified custom logs from .claude folders or history.jsonl
+        do {
+            let cleanClaudeCustomQuery = """
+                DELETE FROM logs 
+                WHERE provider = 'custom' 
+                  AND (
+                    source_file LIKE '%.claude%'
+                    OR source_file LIKE '%history.jsonl%'
+                  )
+            """
+            try db?.run(cleanClaudeCustomQuery)
+        } catch {
+            Logger.shared.error("清理 Claude / history.jsonl custom 误判日志失败: \(error.localizedDescription)")
+        }
     }
 
     // MARK: - Log CRUD
@@ -183,7 +198,7 @@ final class DatabaseService: ObservableObject {
                 let metadata = (try? String(data: JSONSerialization.data(withJSONObject: log.metadata), encoding: .utf8)) ?? "{}"
                 let tags = (try? String(data: JSONSerialization.data(withJSONObject: log.tags), encoding: .utf8)) ?? "[]"
 
-                let insert = self.logsTable.insert(or: .ignore,
+                let insert = self.logsTable.insert(or: .replace,
                                               self.id <- log.id.uuidString,
                                               self.timestamp <- log.timestamp.timeIntervalSince1970,
                                               self.sourceFile <- log.sourceFile,
@@ -233,7 +248,7 @@ final class DatabaseService: ObservableObject {
                     for log in logsToSave {
                         let metadata = (try? String(data: JSONSerialization.data(withJSONObject: log.metadata), encoding: .utf8)) ?? "{}"
                         let tags = (try? String(data: JSONSerialization.data(withJSONObject: log.tags), encoding: .utf8)) ?? "[]"
-                        let insert = self.logsTable.insert(or: .ignore,
+                        let insert = self.logsTable.insert(or: .replace,
                                                       self.id <- log.id.uuidString,
                                                       self.timestamp <- log.timestamp.timeIntervalSince1970,
                                                       self.sourceFile <- log.sourceFile,
@@ -1110,6 +1125,17 @@ final class DatabaseService: ObservableObject {
                           AND (prompt_tokens IS NULL OR prompt_tokens = 0)
                     """
                     try db.run(claudeSQL)
+                    deleted += db.changes
+
+                    // 3) 误判的 custom 记录（来自于 .claude 或是 history.jsonl，导致 model_name 为空且 provider='custom'）
+                    let customSQL = """
+                        DELETE FROM logs WHERE
+                          provider='custom' AND (
+                            source_file LIKE '%.claude%'
+                            OR source_file LIKE '%history.jsonl%'
+                          )
+                    """
+                    try db.run(customSQL)
                     deleted += db.changes
 
                     Task { @MainActor in

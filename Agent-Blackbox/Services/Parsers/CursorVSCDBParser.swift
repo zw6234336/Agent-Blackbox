@@ -38,7 +38,7 @@ struct CursorVSCDBParser: LogParser {
                 copiedShm = true
             }
         } catch {
-            print("Failed to copy Cursor VSCDB to temporary location: \(error.localizedDescription)")
+            Logger.shared.error("Failed to copy Cursor VSCDB to temporary location: \(error.localizedDescription)")
             return []
         }
         
@@ -73,7 +73,7 @@ struct CursorVSCDBParser: LogParser {
             }
             
         } catch {
-            print("Failed to parse copied VSCDB: \(error.localizedDescription)")
+            Logger.shared.error("Failed to parse copied VSCDB: \(error.localizedDescription)")
         }
         
         return results

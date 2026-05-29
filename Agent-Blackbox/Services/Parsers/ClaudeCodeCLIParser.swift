@@ -65,6 +65,7 @@ struct ClaudeCodeCLIParser: LogParser {
         var pendingPrompt: String? = nil
         var pendingPromptTimestamp: Date? = nil
         let sessionId = url.deletingPathExtension().lastPathComponent
+        var assistantIndex = 0
 
         for raw in content.split(separator: "\n", omittingEmptySubsequences: true) {
             guard let data = String(raw).data(using: .utf8),
@@ -100,8 +101,11 @@ struct ClaudeCodeCLIParser: LogParser {
                     continue
                 }
 
+                assistantIndex += 1
+                let logId = UUID.deterministic(from: "claude-code-session-\(sessionId)-\(assistantIndex)")
                 let provider = providerForModel(modelName)
                 let log = ParsedLog(
+                    id: logId,
                     timestamp: timestamp,
                     sourceFile: url.path,
                     provider: provider,

@@ -47,6 +47,7 @@ scratch/
 
 # 审计报告（内部文件）
 AnalysisReport.md
+OpenSourceAuditReport.md
 
 # IDEs
 .idea/

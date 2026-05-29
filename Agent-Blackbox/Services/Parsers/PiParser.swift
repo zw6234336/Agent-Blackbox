@@ -445,7 +445,11 @@ struct PiParser: LogParser {
                     let errorMessage = messageObj["errorMessage"] as? String
                     let provider = detectProvider(model: currentModel, content: nil, sourceFile: url.path)
                     
+                    let messageId = obj["id"] as? String ?? ""
+                    let logId = UUID.deterministic(from: "pi-agent-session-\(conversationId ?? "")-\(messageId)")
+
                     results.append(ParsedLog(
+                        id: logId,
                         timestamp: pendingTimestamp ?? timestamp,
                         sourceFile: url.path,
                         provider: provider,

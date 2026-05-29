@@ -4,7 +4,14 @@ struct GenericLLMParser: LogParser {
     let supportedProvider: LLMProvider = .custom
     
     func canParse(url: URL, content: String) -> Bool {
-        // Fallback parser - always can attempt to parse
+        // Fallback parser - always can attempt to parse EXCEPT for known paths we shouldn't touch
+        let path = url.path.lowercased()
+        if path.contains(".claude") || path.contains("/claude/") || path.contains("claude-3p") {
+            return false
+        }
+        if path.contains("history.jsonl") {
+            return false
+        }
         return true
     }
     
