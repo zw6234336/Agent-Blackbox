@@ -879,7 +879,17 @@ struct DashboardView: View {
         let safeData = data.contains(where: { $0.displayValue > 0 }) ? data : []
         return Group {
             if safeData.isEmpty {
-                emptyChartPlaceholder("暂无数据")
+                // Compact placeholder: emptyChartPlaceholder enforces minHeight: 120, but this view is shown in a 110×110 frame.
+                VStack {
+                    Spacer()
+                    Image(systemName: "chart.bar.xaxis")
+                        .font(.title2)
+                        .foregroundStyle(.tertiary)
+                    Text("暂无数据")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                    Spacer()
+                }
             } else {
                 Chart(safeData) { item in
                     SectorMark(
