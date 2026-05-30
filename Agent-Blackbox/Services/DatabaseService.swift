@@ -651,8 +651,22 @@ final class DatabaseService: ObservableObject {
                         self.response != nil && (self.response ?? "") != ""
                     ).count
                 )
-                stats.uniqueModelCount = try dbConnection.scalar(filterTable.select(distinct: self.modelName).filter(self.modelName != nil && (self.modelName ?? "") != "").count)
-                stats.uniqueProviderCount = try dbConnection.scalar(filterTable.select(distinct: self.providerRaw).filter(self.providerRaw != nil && (self.providerRaw ?? "") != "").count)
+
+                var uniqueCoverageQuery = """
+                    SELECT
+                        COUNT(DISTINCT CASE WHEN model_name IS NOT NULL AND model_name != '' THEN model_name END),
+                        COUNT(DISTINCT CASE WHEN provider IS NOT NULL AND provider != '' THEN provider END)
+                    FROM logs
+                """
+                var uniqueCoverageBindings: [Binding] = []
+                if let start = startTimestamp {
+                    uniqueCoverageQuery += " WHERE timestamp >= ?"
+                    uniqueCoverageBindings.append(start)
+                }
+                if let row = try dbConnection.prepare(uniqueCoverageQuery, uniqueCoverageBindings).first(where: { _ in true }) {
+                    stats.uniqueModelCount = Int(row[0] as? Int64 ?? 0)
+                    stats.uniqueProviderCount = Int(row[1] as? Int64 ?? 0)
+                }
 
                 // Average response time
                 stats.avgResponseTime = try dbConnection.scalar(filterTable.select(self.duration.average)) ?? 0.0
