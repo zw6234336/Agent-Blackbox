@@ -663,7 +663,8 @@ final class DatabaseService: ObservableObject {
                     uniqueCoverageQuery += " WHERE timestamp >= ?"
                     uniqueCoverageBindings.append(start)
                 }
-                if let row = try dbConnection.prepare(uniqueCoverageQuery, uniqueCoverageBindings).first(where: { _ in true }) {
+                var uniqueCoverageRows = try dbConnection.prepare(uniqueCoverageQuery, uniqueCoverageBindings).makeIterator()
+                if let row = uniqueCoverageRows.next() {
                     stats.uniqueModelCount = Int(row[0] as? Int64 ?? 0)
                     stats.uniqueProviderCount = Int(row[1] as? Int64 ?? 0)
                 }
