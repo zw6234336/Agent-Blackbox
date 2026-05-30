@@ -652,29 +652,6 @@ final class DatabaseService: ObservableObject {
                     ).count
                 )
 
-                let uniqueCoverageBaseQuery = """
-                    SELECT
-                        COUNT(DISTINCT CASE WHEN model_name IS NOT NULL AND model_name != '' THEN model_name END) AS unique_model_count,
-                        COUNT(DISTINCT CASE WHEN provider IS NOT NULL AND provider != '' THEN provider END) AS unique_provider_count
-                    FROM logs
-                """
-                let uniqueCoverageQuery: String
-                let uniqueCoverageBindings: [Binding]
-                if let start = startTimestamp {
-                    uniqueCoverageQuery = uniqueCoverageBaseQuery + " WHERE timestamp >= ?"
-                    uniqueCoverageBindings = [start]
-                } else {
-                    uniqueCoverageQuery = uniqueCoverageBaseQuery
-                    uniqueCoverageBindings = []
-                }
-                for row in try dbConnection.prepare(uniqueCoverageQuery, uniqueCoverageBindings) {
-                    let uniqueModelCount = Int(row[0] as? Int64 ?? 0)
-                    let uniqueProviderCount = Int(row[1] as? Int64 ?? 0)
-                    stats.uniqueModelCount = uniqueModelCount
-                    stats.uniqueProviderCount = uniqueProviderCount
-                    break
-                }
-
                 // Average response time
                 stats.avgResponseTime = try dbConnection.scalar(filterTable.select(self.duration.average)) ?? 0.0
 
@@ -709,6 +686,7 @@ final class DatabaseService: ObservableObject {
                         )
                     }
                 }
+                stats.uniqueProviderCount = stats.providerStats.count
 
                 // Calls by model
                 var modelQuery = "SELECT model_name, COUNT(*) as cnt FROM logs WHERE model_name IS NOT NULL "
@@ -717,12 +695,13 @@ final class DatabaseService: ObservableObject {
                     modelQuery += "AND timestamp >= ? "
                     modelBindings.append(start)
                 }
-                modelQuery += "GROUP BY model_name ORDER BY cnt DESC LIMIT 20"
+                modelQuery += "GROUP BY model_name ORDER BY cnt DESC"
                 for row in try dbConnection.prepare(modelQuery, modelBindings) {
                     if let mName = row[0] as? String, let count = row[1] as? Int64 {
                         stats.callsByModel[mName] = Int(count)
                     }
                 }
+                stats.uniqueModelCount = stats.callsByModel.count
 
                 // Tokens by day / hour
                 let daysLimit = daysToUse ?? 90
