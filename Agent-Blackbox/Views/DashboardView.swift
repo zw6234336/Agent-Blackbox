@@ -246,8 +246,7 @@ struct DashboardView: View {
                 .frame(height: 460)
             }
             .padding(20)
-            .opacity(isRefreshing ? 0.75 : 1.0)
-            .blur(radius: isRefreshing ? 0.8 : 0)
+            .opacity(isRefreshing ? 0.85 : 1.0)
             .animation(.easeInOut(duration: 0.25), value: isRefreshing)
         }
         .background(Color.dashboardBackground)
