@@ -218,6 +218,18 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("NavigateToRateLimits"))) { _ in
             selectedTab = 4
         }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("NavigateToLogs"))) { _ in
+            selectedTab = 1
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("NavigateToMonitor"))) { _ in
+            selectedTab = 3
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("NavigateToCompilation"))) { _ in
+            selectedTab = 6
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("NavigateToDailySummary"))) { _ in
+            selectedTab = 8
+        }
     }
 
     private func toggleProxy() {

@@ -17,6 +17,9 @@ struct DashboardStats {
     var slowestLog: ParsedLog? = nil
     var largestPayloadLog: ParsedLog? = nil
     var localCallsCount: Int = 0
+    var trainingPairCount: Int = 0
+    var uniqueModelCount: Int = 0
+    var uniqueProviderCount: Int = 0
     
     var errorRate: Double {
         guard totalCalls > 0 else { return 0 }
@@ -26,6 +29,11 @@ struct DashboardStats {
     var successRate: Double {
         guard totalCalls > 0 else { return 0 }
         return 100.0 - errorRate
+    }
+
+    var promptCompletionRatio: Double {
+        guard totalTokens > 0 else { return 0 }
+        return Double(totalPromptTokens) / Double(totalTokens)
     }
 }
 
