@@ -651,6 +651,16 @@ final class DatabaseService: ObservableObject {
                         self.response != nil && (self.response ?? "") != ""
                     ).count
                 )
+                stats.uniqueModelCount = try dbConnection.scalar(
+                    filterTable
+                        .filter(self.modelName != nil && (self.modelName ?? "") != "")
+                        .select(self.modelName.distinct.count)
+                )
+                stats.uniqueProviderCount = try dbConnection.scalar(
+                    filterTable
+                        .filter(self.providerRaw != nil && (self.providerRaw ?? "") != "")
+                        .select(self.providerRaw.distinct.count)
+                )
 
                 // Average response time
                 stats.avgResponseTime = try dbConnection.scalar(filterTable.select(self.duration.average)) ?? 0.0
@@ -686,7 +696,6 @@ final class DatabaseService: ObservableObject {
                         )
                     }
                 }
-                stats.uniqueProviderCount = stats.providerStats.count
 
                 // Calls by model
                 var modelQuery = "SELECT model_name, COUNT(*) as cnt FROM logs WHERE model_name IS NOT NULL "
@@ -695,13 +704,12 @@ final class DatabaseService: ObservableObject {
                     modelQuery += "AND timestamp >= ? "
                     modelBindings.append(start)
                 }
-                modelQuery += "GROUP BY model_name ORDER BY cnt DESC"
+                modelQuery += "GROUP BY model_name ORDER BY cnt DESC LIMIT 20"
                 for row in try dbConnection.prepare(modelQuery, modelBindings) {
                     if let mName = row[0] as? String, let count = row[1] as? Int64 {
                         stats.callsByModel[mName] = Int(count)
                     }
                 }
-                stats.uniqueModelCount = stats.callsByModel.count
 
                 // Tokens by day / hour
                 let daysLimit = daysToUse ?? 90
