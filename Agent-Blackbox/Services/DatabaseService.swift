@@ -652,19 +652,23 @@ final class DatabaseService: ObservableObject {
                     ).count
                 )
 
-                var uniqueCoverageQuery = """
+                let uniqueCoverageBaseQuery = """
                     SELECT
                         COUNT(DISTINCT CASE WHEN model_name IS NOT NULL AND model_name != '' THEN model_name END),
                         COUNT(DISTINCT CASE WHEN provider IS NOT NULL AND provider != '' THEN provider END)
                     FROM logs
                 """
-                var uniqueCoverageBindings: [Binding] = []
+                let uniqueCoverageQuery: String
+                let uniqueCoverageBindings: [Binding]
                 if let start = startTimestamp {
-                    uniqueCoverageQuery += " WHERE timestamp >= ?"
-                    uniqueCoverageBindings.append(start)
+                    uniqueCoverageQuery = uniqueCoverageBaseQuery + " WHERE timestamp >= ?"
+                    uniqueCoverageBindings = [start]
+                } else {
+                    uniqueCoverageQuery = uniqueCoverageBaseQuery
+                    uniqueCoverageBindings = []
                 }
-                var uniqueCoverageIterator = try dbConnection.prepare(uniqueCoverageQuery, uniqueCoverageBindings).makeIterator()
-                if let row = uniqueCoverageIterator.next() {
+                var coverageIterator = try dbConnection.prepare(uniqueCoverageQuery, uniqueCoverageBindings).makeIterator()
+                if let row = coverageIterator.next() {
                     stats.uniqueModelCount = Int(row[0] as? Int64 ?? 0)
                     stats.uniqueProviderCount = Int(row[1] as? Int64 ?? 0)
                 }
