@@ -232,8 +232,9 @@ struct CollectionLogRow: View {
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: log.provider?.iconName ?? "doc.text")
+                .font(.system(size: 13))
                 .foregroundStyle(log.provider?.brandColor ?? .secondary)
-                .frame(width: 20)
+                .frame(width: 24, height: 24)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(log.modelName ?? "Unknown Model")
@@ -273,10 +274,14 @@ struct CollectionLogRow: View {
 
             Button(action: onRemove) {
                 Image(systemName: "minus.circle")
+                    .font(.system(size: 14))
                     .foregroundStyle(Color.errorRed)
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .help("从收藏夹中移除")
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 5)
     }
 }

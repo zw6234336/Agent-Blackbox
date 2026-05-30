@@ -260,9 +260,9 @@ struct LogListRow: View {
         HStack(spacing: 10) {
             // Provider icon
             Image(systemName: log.provider?.iconName ?? "doc.text")
-                .font(.caption)
+                .font(.system(size: 13))
                 .foregroundStyle(log.provider?.brandColor ?? .secondary)
-                .frame(width: 20)
+                .frame(width: 24, height: 24)
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
@@ -306,11 +306,15 @@ struct LogListRow: View {
             // Bookmark button
             Button(action: onBookmarkToggle) {
                 Image(systemName: log.isBookmarked ? "star.fill" : "star")
-                    .font(.caption)
+                    .font(.system(size: 13))
                     .foregroundStyle(log.isBookmarked ? Color.yellow : Color.secondary)
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
+                    .scaleEffect(log.isBookmarked ? 1.1 : 1.0)
+                    .animation(.spring(response: 0.3, dampingFraction: 0.6), value: log.isBookmarked)
             }
             .buttonStyle(.plain)
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 4)
     }
 }

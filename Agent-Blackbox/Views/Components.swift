@@ -42,13 +42,14 @@ struct StatusIndicator: View {
 // MARK: - LogEntryRow
 struct LogEntryRow: View {
     let url: URL
+    @State private var fileSize: Int?
 
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: iconForFile(url))
-                .font(.caption)
+                .font(.system(size: 12))
                 .foregroundStyle(colorForFile(url))
-                .frame(width: 20)
+                .frame(width: 24, height: 24)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(url.lastPathComponent)
@@ -63,15 +64,24 @@ struct LogEntryRow: View {
 
             Spacer()
 
-            // File size
-            if let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
-               let size = attrs[.size] as? Int {
+            // File size (loaded asynchronously to avoid blocking main thread)
+            if let size = fileSize {
                 Text(ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file))
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 5)
+        .task {
+            let path = url.path
+            fileSize = await Task.detached {
+                if let attrs = try? FileManager.default.attributesOfItem(atPath: path),
+                   let size = attrs[.size] as? Int {
+                    return size
+                }
+                return nil
+            }.value
+        }
     }
 
     private func iconForFile(_ url: URL) -> String {
@@ -120,6 +130,7 @@ struct FilterChip: View {
     let isSelected: Bool
     let color: Color
     let action: () -> Void
+    @State private var isHovered = false
 
     var body: some View {
         Button(action: action) {
@@ -132,16 +143,21 @@ struct FilterChip: View {
                 }
             }
             .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(isSelected ? color.opacity(0.2) : Color.primary.opacity(0.05))
+            .padding(.vertical, 6)
+            .background(isSelected ? color.opacity(0.2) : (isHovered ? Color.primary.opacity(0.08) : Color.primary.opacity(0.05)))
             .foregroundStyle(isSelected ? color : .secondary)
             .clipShape(Capsule())
             .overlay(
                 Capsule()
                     .stroke(isSelected ? color.opacity(0.3) : Color.clear, lineWidth: 1)
             )
+            .animation(.easeInOut(duration: 0.15), value: isSelected)
+            .animation(.easeInOut(duration: 0.15), value: isHovered)
         }
         .buttonStyle(.plain)
+        .onHover { hovering in
+            isHovered = hovering
+        }
     }
 }
 
