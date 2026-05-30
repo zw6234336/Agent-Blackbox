@@ -476,12 +476,12 @@ struct DashboardView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("一眼看懂：采集 → 分析 → 训练数据")
                             .font(.headline)
-                            .accessibilityLabel("At a glance: capture, analyze, and prepare training data")
                         Text("为多模型、多供应商调用过程留痕，优先展示最关心的数据资产与风险指标。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                            .accessibilityLabel("Record multi-model and multi-provider calls, with priority data assets and risk metrics.")
                     }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("At a glance: capture, analyze, and prepare training data. Record multi-model and multi-provider calls, with priority data assets and risk metrics.")
                     Spacer()
                     Button(action: {
                         if !proxyServer.isRunning {
@@ -493,6 +493,7 @@ struct DashboardView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(proxyServer.isRunning ? Color.successGreen : Color.infoBlue)
+                    .accessibilityLabel(proxyServer.isRunning ? "Recording calls" : "Start recording calls")
                 }
 
                 HStack(spacing: 10) {
@@ -501,28 +502,32 @@ struct DashboardView: View {
                         value: "\(stats.uniqueProviderCount)",
                         subtitle: "已记录来源",
                         icon: "building.2.fill",
-                        color: .infoBlue
+                        color: .infoBlue,
+                        accessibilityLabel: "Provider coverage, \(stats.uniqueProviderCount) recorded providers"
                     )
                     ReadinessPill(
                         title: "模型覆盖",
                         value: "\(stats.uniqueModelCount)",
                         subtitle: "可对比模型",
                         icon: "cpu.fill",
-                        color: .accentGradientStart
+                        color: .accentGradientStart,
+                        accessibilityLabel: "Model coverage, \(stats.uniqueModelCount) comparable models"
                     )
                     ReadinessPill(
                         title: "训练样本",
                         value: stats.trainingPairCount.formattedCompact,
                         subtitle: "Prompt/Response 对",
                         icon: "tray.full.fill",
-                        color: .successGreen
+                        color: .successGreen,
+                        accessibilityLabel: "Training samples, \(stats.trainingPairCount) prompt and response pairs"
                     )
                     ReadinessPill(
                         title: "输入占比",
                         value: stats.promptCompletionRatio.formatted(.percent.precision(.fractionLength(0))),
                         subtitle: "上下文结构",
                         icon: "arrow.left.arrow.right.circle.fill",
-                        color: .warningOrange
+                        color: .warningOrange,
+                        accessibilityLabel: "Input token ratio, \(stats.promptCompletionRatio.formatted(.percent.precision(.fractionLength(0))))"
                     )
                 }
             }
@@ -532,13 +537,14 @@ struct DashboardView: View {
             VStack(alignment: .leading, spacing: 10) {
                 Text("快捷操作")
                     .font(.headline)
+                    .accessibilityLabel("Quick Actions")
                 HStack(spacing: 8) {
-                    workflowButton("查看日志", icon: "doc.text.magnifyingglass", notification: "NavigateToLogs")
-                    workflowButton("监控目录", icon: "eye.circle", notification: "NavigateToMonitor")
+                    workflowButton("查看日志", icon: "doc.text.magnifyingglass", notification: "NavigateToLogs", accessibilityLabel: "View Logs")
+                    workflowButton("监控目录", icon: "eye.circle", notification: "NavigateToMonitor", accessibilityLabel: "Monitor Directory")
                 }
                 HStack(spacing: 8) {
-                    workflowButton("生成复盘", icon: "calendar.day.timeline.left", notification: "NavigateToDailySummary")
-                    workflowButton("整理导出", icon: "doc.append", notification: "NavigateToCompilation")
+                    workflowButton("生成复盘", icon: "calendar.day.timeline.left", notification: "NavigateToDailySummary", accessibilityLabel: "Generate Summary")
+                    workflowButton("整理导出", icon: "doc.append", notification: "NavigateToCompilation", accessibilityLabel: "Organize and Export")
                 }
             }
             .frame(width: 250, alignment: .leading)
@@ -547,7 +553,7 @@ struct DashboardView: View {
         .animation(.spring(response: 0.45, dampingFraction: 0.8), value: stats.trainingPairCount)
     }
 
-    private func workflowButton(_ title: String, icon: String, notification: String) -> some View {
+    private func workflowButton(_ title: String, icon: String, notification: String, accessibilityLabel: String) -> some View {
         Button(action: {
             NotificationCenter.default.post(name: Notification.Name(notification), object: nil)
         }) {
@@ -557,6 +563,7 @@ struct DashboardView: View {
                 .padding(.vertical, 8)
         }
         .buttonStyle(.bordered)
+        .accessibilityLabel(accessibilityLabel)
     }
 
     // MARK: - Vulnerability & Anomaly Spotlights
@@ -1400,6 +1407,7 @@ struct ReadinessPill: View {
     let subtitle: String
     let icon: String
     let color: Color
+    let accessibilityLabel: String
 
     var body: some View {
         HStack(spacing: 10) {
@@ -1436,6 +1444,8 @@ struct ReadinessPill: View {
             RoundedRectangle(cornerRadius: 10)
                 .stroke(color.opacity(0.12), lineWidth: 1)
         )
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityLabel)
     }
 }
 
