@@ -654,8 +654,8 @@ final class DatabaseService: ObservableObject {
 
                 let uniqueCoverageBaseQuery = """
                     SELECT
-                        COUNT(DISTINCT CASE WHEN model_name IS NOT NULL AND model_name != '' THEN model_name END),
-                        COUNT(DISTINCT CASE WHEN provider IS NOT NULL AND provider != '' THEN provider END)
+                        COUNT(DISTINCT CASE WHEN model_name IS NOT NULL AND model_name != '' THEN model_name END) AS unique_model_count,
+                        COUNT(DISTINCT CASE WHEN provider IS NOT NULL AND provider != '' THEN provider END) AS unique_provider_count
                     FROM logs
                 """
                 let uniqueCoverageQuery: String
@@ -667,10 +667,12 @@ final class DatabaseService: ObservableObject {
                     uniqueCoverageQuery = uniqueCoverageBaseQuery
                     uniqueCoverageBindings = []
                 }
-                var coverageIterator = try dbConnection.prepare(uniqueCoverageQuery, uniqueCoverageBindings).makeIterator()
-                if let row = coverageIterator.next() {
-                    stats.uniqueModelCount = Int(row[0] as? Int64 ?? 0)
-                    stats.uniqueProviderCount = Int(row[1] as? Int64 ?? 0)
+                for row in try dbConnection.prepare(uniqueCoverageQuery, uniqueCoverageBindings) {
+                    let uniqueModelCount = Int(row[0] as? Int64 ?? 0)
+                    let uniqueProviderCount = Int(row[1] as? Int64 ?? 0)
+                    stats.uniqueModelCount = uniqueModelCount
+                    stats.uniqueProviderCount = uniqueProviderCount
+                    break
                 }
 
                 // Average response time

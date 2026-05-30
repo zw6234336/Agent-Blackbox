@@ -476,9 +476,11 @@ struct DashboardView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("一眼看懂：采集 → 分析 → 训练数据")
                             .font(.headline)
+                            .accessibilityLabel("At a glance: capture, analyze, and prepare training data")
                         Text("为多模型、多供应商调用过程留痕，优先展示最关心的数据资产与风险指标。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                            .accessibilityLabel("Record multi-model and multi-provider calls, with priority data assets and risk metrics.")
                     }
                     Spacer()
                     Button(action: {
