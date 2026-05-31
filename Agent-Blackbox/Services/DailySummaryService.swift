@@ -242,16 +242,7 @@ final class DailySummaryService: ObservableObject {
         
         request.httpBody = requestBody
         
-        let (data, response) = try await URLSession.shared.data(for: request)
-        
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw NSError(domain: "DailySummary", code: -1, userInfo: [NSLocalizedDescriptionKey: "未能获得有效的 HTTP 响应"])
-        }
-        
-        guard httpResponse.statusCode == 200 else {
-            let errorText = String(data: data, encoding: .utf8) ?? "未知错误"
-            throw NSError(domain: "DailySummary", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "服务器返回错误 (\(httpResponse.statusCode)): \(errorText)"])
-        }
+        let data = try await httpRequest(url: url, headers: request.allHTTPHeaderFields ?? [:], body: requestBody)
         
         if provider == "anthropic" {
             guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -335,17 +326,14 @@ final class DailySummaryService: ObservableObject {
                 return (false, "无效的 URL: \(finalUrlString)")
             }
             
-            var request = URLRequest(url: url)
-            request.httpMethod = "POST"
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.timeoutInterval = 10
+            var headers: [String: String] = ["Content-Type": "application/json"]
             
             if !apiKey.isEmpty {
                 if provider == "anthropic" {
-                    request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
-                    request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+                    headers["x-api-key"] = apiKey
+                    headers["anthropic-version"] = "2023-06-01"
                 } else {
-                    request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+                    headers["Authorization"] = "Bearer \(apiKey)"
                 }
             }
             
@@ -371,22 +359,119 @@ final class DailySummaryService: ObservableObject {
                 requestBody = try JSONSerialization.data(withJSONObject: bodyObj)
             }
             
-            request.httpBody = requestBody
-            
-            let (data, response) = try await URLSession.shared.data(for: request)
-            
-            guard let httpResponse = response as? HTTPURLResponse else {
-                return (false, "未能获得有效的 HTTP 响应")
-            }
-            
-            if httpResponse.statusCode == 200 {
-                return (true, "连接成功！配置正确。")
-            } else {
-                let errorText = String(data: data, encoding: .utf8) ?? "未知错误"
-                return (false, "连接失败 (状态码 \(httpResponse.statusCode)): \(errorText)")
-            }
+            let _ = try await httpRequest(url: url, headers: headers, body: requestBody, timeout: 10)
+            return (true, "连接成功！配置正确。")
         } catch {
             return (false, "连接异常: \(error.localizedDescription)")
+        }
+    }
+    
+    // MARK: - ATS-free HTTP via curl subprocess
+    
+    /// Perform an HTTP POST using curl to bypass macOS App Transport Security.
+    /// URLSession enforces ATS which blocks plain HTTP in SwiftPM-built app bundles.
+    private func httpRequest(
+        url: URL,
+        headers: [String: String],
+        body: Data,
+        timeout: Int = 300
+    ) async throws -> Data {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
+                
+                var args = [
+                    "-s", "-S",           // silent but show errors
+                    "--max-time", "\(timeout)",
+                    "-X", "POST",
+                    "-w", "\n__HTTP_STATUS__:%{http_code}",  // append status code
+                ]
+                
+                for (key, value) in headers {
+                    args += ["-H", "\(key): \(value)"]
+                }
+                
+                // Write body to temp file to avoid argument length limits
+                let tempFile = FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString + ".json")
+                do {
+                    try body.write(to: tempFile)
+                } catch {
+                    continuation.resume(throwing: error)
+                    return
+                }
+                defer { try? FileManager.default.removeItem(at: tempFile) }
+                
+                args += ["-d", "@\(tempFile.path)", url.absoluteString]
+                process.arguments = args
+                
+                let stdout = Pipe()
+                let stderr = Pipe()
+                process.standardOutput = stdout
+                process.standardError = stderr
+                
+                do {
+                    try process.run()
+                    process.waitUntilExit()
+                } catch {
+                    continuation.resume(throwing: NSError(
+                        domain: "DailySummary", code: -1,
+                        userInfo: [NSLocalizedDescriptionKey: "无法启动 curl: \(error.localizedDescription)"]
+                    ))
+                    return
+                }
+                
+                let outputData = stdout.fileHandleForReading.readDataToEndOfFile()
+                let stderrData = stderr.fileHandleForReading.readDataToEndOfFile()
+                
+                guard process.terminationStatus == 0 else {
+                    let errText = String(data: stderrData, encoding: .utf8) ?? "curl 执行失败"
+                    continuation.resume(throwing: NSError(
+                        domain: "DailySummary", code: Int(process.terminationStatus),
+                        userInfo: [NSLocalizedDescriptionKey: "请求失败: \(errText)"]
+                    ))
+                    return
+                }
+                
+                guard let outputStr = String(data: outputData, encoding: .utf8) else {
+                    continuation.resume(throwing: NSError(
+                        domain: "DailySummary", code: -1,
+                        userInfo: [NSLocalizedDescriptionKey: "无法解析响应数据"]
+                    ))
+                    return
+                }
+                
+                // Split response body from status code trailer
+                let marker = "\n__HTTP_STATUS__:"
+                let responseBody: String
+                let statusCode: Int
+                if let range = outputStr.range(of: marker, options: .backwards) {
+                    responseBody = String(outputStr[..<range.lowerBound])
+                    statusCode = Int(outputStr[range.upperBound...]) ?? 0
+                } else {
+                    responseBody = outputStr
+                    statusCode = 0
+                }
+                
+                guard statusCode == 200 else {
+                    continuation.resume(throwing: NSError(
+                        domain: "DailySummary", code: statusCode,
+                        userInfo: [NSLocalizedDescriptionKey: "服务器返回错误 (\(statusCode)): \(responseBody.prefix(500))"]
+                    ))
+                    return
+                }
+                
+                guard let data = responseBody.data(using: .utf8) else {
+                    continuation.resume(throwing: NSError(
+                        domain: "DailySummary", code: -1,
+                        userInfo: [NSLocalizedDescriptionKey: "响应数据编码错误"]
+                    ))
+                    return
+                }
+                
+                continuation.resume(returning: data)
+            }
         }
     }
 }
