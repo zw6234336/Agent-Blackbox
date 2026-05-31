@@ -644,6 +644,24 @@ final class DatabaseService: ObservableObject {
                     filterTable.filter(self.errorMessage != nil && (self.errorMessage ?? "") != "").count
                 )
 
+                // Dataset readiness for downstream analysis / fine-tuning exports
+                stats.trainingPairCount = try dbConnection.scalar(
+                    filterTable.filter(
+                        self.prompt != nil && (self.prompt ?? "") != "" &&
+                        self.response != nil && (self.response ?? "") != ""
+                    ).count
+                )
+                stats.uniqueModelCount = try dbConnection.scalar(
+                    filterTable
+                        .filter(self.modelName != nil && (self.modelName ?? "") != "")
+                        .select(self.modelName.distinct.count)
+                )
+                stats.uniqueProviderCount = try dbConnection.scalar(
+                    filterTable
+                        .filter(self.providerRaw != nil && (self.providerRaw ?? "") != "")
+                        .select(self.providerRaw.distinct.count)
+                )
+
                 // Average response time
                 stats.avgResponseTime = try dbConnection.scalar(filterTable.select(self.duration.average)) ?? 0.0
 
