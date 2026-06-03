@@ -491,6 +491,13 @@ struct SettingsView: View {
                         clientInterceptionStatus(for: .pi)
                     }
                 }
+                
+                Toggle(isOn: $configService.config.enableVSCodeCopilotInterception) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("VS Code - GitHub Copilot")
+                        clientInterceptionStatus(for: .vscodeCopilot)
+                    }
+                }
             }
             
             Section("Cursor 核心设置 (说明)") {

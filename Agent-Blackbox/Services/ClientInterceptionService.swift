@@ -8,6 +8,7 @@ enum InterceptClient: String, CaseIterable, Identifiable {
     case cursorRooCline = "cursor_roo_cline"
     case claudeCode = "claude_code"
     case pi = "pi"
+    case vscodeCopilot = "vscode_copilot"
     
     var id: String { rawValue }
     
@@ -19,6 +20,7 @@ enum InterceptClient: String, CaseIterable, Identifiable {
         case .cursorRooCline: return "Cursor Roo-Cline"
         case .claudeCode: return "Claude Code"
         case .pi: return "Pi Agent"
+        case .vscodeCopilot: return "VS Code GitHub Copilot"
         }
     }
     
@@ -37,6 +39,8 @@ enum InterceptClient: String, CaseIterable, Identifiable {
             return URL(fileURLWithPath: home + "/.claude/settings.json")
         case .pi:
             return URL(fileURLWithPath: home + "/.pi/agent/models.json")
+        case .vscodeCopilot:
+            return URL(fileURLWithPath: home + "/Library/Application Support/Code/User/settings.json")
         }
     }
     
@@ -93,6 +97,7 @@ final class ClientInterceptionService: ObservableObject {
         updateInterceptionState(.cursorRooCline, shouldIntercept: config.enableCursorRooClineInterception)
         updateInterceptionState(.claudeCode, shouldIntercept: config.enableClaudeCodeInterception)
         updateInterceptionState(.pi, shouldIntercept: config.enablePiInterception)
+        updateInterceptionState(.vscodeCopilot, shouldIntercept: config.enableVSCodeCopilotInterception)
     }
     
     func updateInterceptionState(_ client: InterceptClient, shouldIntercept: Bool) {
@@ -167,6 +172,12 @@ final class ClientInterceptionService: ObservableObject {
             var env = json["env"] as? [String: String] ?? [:]
             env["ANTHROPIC_BASE_URL"] = "http://127.0.0.1:\(proxyPort)"
             json["env"] = env
+            
+        case .vscodeCopilot:
+            var advanced = json["github.copilot.advanced"] as? [String: Any] ?? [:]
+            advanced["debug.overrideProxyUrl"] = "http://127.0.0.1:\(proxyPort)"
+            advanced["debug.testOverrideProxyUrl"] = "http://127.0.0.1:\(proxyPort)"
+            json["github.copilot.advanced"] = advanced
             
         case .pi:
             guard var providers = json["providers"] as? [String: [String: Any]] else {

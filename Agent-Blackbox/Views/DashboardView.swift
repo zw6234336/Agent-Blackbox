@@ -875,8 +875,8 @@ struct DashboardView: View {
     }
 
     private func donutChartView(data: [ProviderDisplayData]) -> some View {
-        // Guard: SectorMark crashes (EXC_BREAKPOINT in Charts/acos) when all values are zero
-        let safeData = data.contains(where: { $0.displayValue > 0 }) ? data : []
+        // Guard: SectorMark crashes (EXC_BREAKPOINT in Charts/acos) when values are zero or negative
+        let safeData = data.filter { $0.displayValue > 0 }
         return Group {
             if safeData.isEmpty {
                 emptyChartPlaceholder("暂无数据")

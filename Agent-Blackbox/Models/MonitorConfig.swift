@@ -132,9 +132,9 @@ struct MonitorConfig: Codable, Equatable {
     var enableCursorRooClineInterception: Bool = false
     var enableClaudeCodeInterception: Bool = false
     var enablePiInterception: Bool = false
+    var enableVSCodeCopilotInterception: Bool = false
     
-
-    /// 每个 provider 的限额配置（RPM / TPM / 日预算 / 月预算）
+    // 每个 provider 的限额配置（RPM / TPM / 日预算 / 月预算）
     var providerRateLimits: [String: ProviderRateLimit] = ProviderRateLimit.defaults()
 
     /// 速率统计采样间隔（秒）
@@ -170,6 +170,7 @@ struct MonitorConfig: Codable, Equatable {
         case enableCursorRooClineInterception
         case enableClaudeCodeInterception
         case enablePiInterception
+        case enableVSCodeCopilotInterception
         case providerRateLimits
         case rateSamplingInterval
     }
@@ -224,6 +225,7 @@ struct MonitorConfig: Codable, Equatable {
         self.enableCursorRooClineInterception = try container.decodeIfPresent(Bool.self, forKey: .enableCursorRooClineInterception) ?? false
         self.enableClaudeCodeInterception = try container.decodeIfPresent(Bool.self, forKey: .enableClaudeCodeInterception) ?? false
         self.enablePiInterception = try container.decodeIfPresent(Bool.self, forKey: .enablePiInterception) ?? false
+        self.enableVSCodeCopilotInterception = try container.decodeIfPresent(Bool.self, forKey: .enableVSCodeCopilotInterception) ?? false
         self.providerRateLimits = try container.decodeIfPresent([String: ProviderRateLimit].self, forKey: .providerRateLimits) ?? ProviderRateLimit.defaults()
         self.rateSamplingInterval = try container.decodeIfPresent(TimeInterval.self, forKey: .rateSamplingInterval) ?? 5.0
     }

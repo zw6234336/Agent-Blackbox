@@ -672,6 +672,8 @@ struct ProxyDashboardView: View {
         case "cursor":
             configService.config.enableCursorClineInterception = false
             configService.config.enableCursorRooClineInterception = false
+        case "copilot":
+            configService.config.enableVSCodeCopilotInterception = false
         default:
             break
         }
@@ -1595,10 +1597,13 @@ struct QuickInterceptionControlView: View {
                     interceptionToggle(for: .claudeCode, binding: $configService.config.enableClaudeCodeInterception)
                     interceptionToggle(for: .pi, binding: $configService.config.enablePiInterception)
                 }
+                HStack(spacing: 6) {
+                    interceptionToggle(for: .vscodeCopilot, binding: $configService.config.enableVSCodeCopilotInterception)
+                }
             }
         }
         .padding(10)
-        .frame(width: 360, height: 160)
+        .frame(width: 360, height: 195)
         .background(RoundedRectangle(cornerRadius: 12).fill(.ultraThinMaterial))
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.primary.opacity(0.08), lineWidth: 1))
         .onAppear {

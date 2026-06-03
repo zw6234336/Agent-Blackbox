@@ -300,6 +300,20 @@ final class ProxyServerService: ObservableObject {
             }
         }
         
+        // 3.5. Detect GitHub Copilot / Codex
+        let pathLower = path.lowercased()
+        let uaLower = headers["user-agent"]?.lowercased() ?? ""
+        let auth = headers["authorization"] ?? ""
+        let isCopilot = pathLower.contains("copilot") ||
+                        uaLower.contains("copilot") ||
+                        uaLower.contains("github-copilot") ||
+                        auth.hasPrefix("Bearer gh")
+        
+        if isCopilot {
+            Logger.shared.info("网关代理: 检测到 GitHub Copilot/Codex 请求，自动路由至 GitHub Copilot 上游")
+            return "https://copilot-proxy.githubusercontent.com"
+        }
+        
         // 4. Default Fallback based on path
         if path.contains("messages") {
             return config.anthropicUpstreamUrl
