@@ -966,6 +966,7 @@ private struct HourlyMiniChart: View {
             }
             .chartXAxis(.hidden)
             .chartYAxis(.hidden)
+            .chartYScale(domain: 0...(max(10, buckets.map(\.count).max() ?? 10)))
 
             Text("Top model: \(topModel)")
                 .font(.system(size: 10))

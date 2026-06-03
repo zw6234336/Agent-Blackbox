@@ -551,7 +551,7 @@ struct ProxyDashboardView: View {
                         }
                     }
                 }
-                .chartYScale(range: .plotDimension(padding: 5))
+                .chartYScale(domain: 0...(max(10, viewModel.peakRate)), range: .plotDimension(padding: 5))
             }
         }
     }
