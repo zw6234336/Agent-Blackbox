@@ -880,6 +880,22 @@ struct DashboardView: View {
         return Group {
             if safeData.isEmpty {
                 emptyChartPlaceholder("暂无数据")
+            } else if safeData.count == 1 {
+                // SwiftUI SectorMark crashes when there is only a single data point on macOS/iOS SwiftUI Charts.
+                // We fallback to a clean native Circle rendering when safeData contains exactly 1 element.
+                let item = safeData[0]
+                let isSelected = selectedProvider == nil || selectedProvider == item.provider
+                ZStack {
+                    Circle()
+                        .stroke(item.provider.brandColor.opacity(0.12), lineWidth: 16)
+                        .frame(width: 80, height: 80)
+                    Circle()
+                        .trim(from: 0.0, to: 1.0)
+                        .stroke(item.provider.brandColor.gradient, style: StrokeStyle(lineWidth: 16, lineCap: .round))
+                        .frame(width: 80, height: 80)
+                        .rotationEffect(.degrees(-90))
+                }
+                .opacity(isSelected ? 1.0 : 0.35)
             } else {
                 Chart(safeData) { item in
                     SectorMark(
