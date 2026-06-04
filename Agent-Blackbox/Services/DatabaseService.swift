@@ -198,6 +198,18 @@ final class DatabaseService: ObservableObject {
         } catch {
             Logger.shared.error("清理 claude-code 误判模型日志失败: \(error.localizedDescription)")
         }
+
+        // Clean up logs that incorrectly labeled "default" or "unknown" as model name
+        do {
+            let cleanInvalidModelQuery = """
+                UPDATE logs 
+                SET model_name = NULL 
+                WHERE model_name = 'default' OR model_name = 'unknown'
+            """
+            try db?.run(cleanInvalidModelQuery)
+        } catch {
+            Logger.shared.error("清理 default/unknown 误判模型日志失败: \(error.localizedDescription)")
+        }
     }
 
     // MARK: - Log CRUD

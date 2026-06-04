@@ -67,4 +67,27 @@ struct ParsedLog: Identifiable, Codable, Hashable {
     
     /// Legacy compatibility: returns totalTokens
     var tokensUsed: Int? { totalTokens }
+
+    /// 验证模型名是否像真实模型名，剔除 `default`、`unknown`、`n_ctx`、`FileNotFoundError` 等污染和默认值
+    static func isValidModelName(_ raw: String?) -> Bool {
+        guard let s = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !s.isEmpty else { return false }
+        if s.count < 3 { return false }
+        if s.rangeOfCharacter(from: .letters) == nil { return false }
+        
+        let blocklist: Set<String> = [
+            "default", "unknown", "synthetic", "<synthetic>", "n_ctx", "n_batch", "n_gpu_layers", "n_threads",
+            "rope_freq_base", "rope_freq_scale", "filenotfounderror", "valueerror", "typeerror",
+            "runtimeerror", "indexerror", "keyerror", "modulenotfounderror", "permissionerror",
+            "true", "false", "none", "null", "nil", "openaichatmodel.builder"
+        ]
+        if blocklist.contains(s.lowercased()) { return false }
+        if s.range(of: #"^[\d\.]+$"#, options: .regularExpression) != nil { return false }
+        if s.contains(".") {
+            let parts = s.split(separator: ".")
+            if parts.count >= 2, parts.allSatisfy({ $0.first?.isUppercase ?? false }) {
+                return false
+            }
+        }
+        return true
+    }
 }

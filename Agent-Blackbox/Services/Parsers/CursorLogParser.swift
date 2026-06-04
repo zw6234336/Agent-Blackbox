@@ -58,12 +58,13 @@ struct CursorLogParser: LogParser {
                 let tokens = firstMatch(in: line, pattern: #"tokens?["':\s]+(\d+)"#)
                 let timestamp = extractTimestamp(from: line) ?? defaultTimestamp
                 
-                if model != nil || tokens != nil {
+                let validatedModel = ParsedLog.isValidModelName(model) ? model : nil
+                if validatedModel != nil || tokens != nil {
                     results.append(ParsedLog(
                         timestamp: timestamp,
                         sourceFile: url.path,
-                        provider: detectProvider(model: model, content: nil, sourceFile: url.path),
-                        modelName: model,
+                        provider: detectProvider(model: validatedModel, content: nil, sourceFile: url.path),
+                        modelName: validatedModel,
                         totalTokens: tokens.flatMap(Int.init),
                         metadata: ["format": "cursor_log", "source_line": String(line.prefix(200)), "client": "cursor"]
                     ))
@@ -75,7 +76,8 @@ struct CursorLogParser: LogParser {
     }
     
     private func extractLog(from obj: [String: Any], sourceFile: String, defaultTimestamp: Date) -> ParsedLog? {
-        let model = obj["model"] as? String ?? obj["modelName"] as? String
+        let rawModel = obj["model"] as? String ?? obj["modelName"] as? String
+        let model = ParsedLog.isValidModelName(rawModel) ? rawModel : nil
         let prompt = maskAPIKey(obj["prompt"] as? String ?? obj["message"] as? String)
         let response = maskAPIKey(obj["response"] as? String ?? obj["text"] as? String ?? obj["content"] as? String)
         

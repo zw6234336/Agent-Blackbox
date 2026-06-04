@@ -503,7 +503,8 @@ final class ProxyServerService: ObservableObject {
             parsedResp = parseResponseBody(respData, isAnthropic: isAnthropic)
         }
 
-        let model = reqData.model ?? parsedResp.modelOverride ?? "unknown"
+        let rawModel = reqData.model ?? parsedResp.modelOverride
+        let model = ParsedLog.isValidModelName(rawModel) ? rawModel : nil
         let prompt = reqData.prompt
         let responseText = parsedResp.text
         
@@ -532,7 +533,7 @@ final class ProxyServerService: ObservableObject {
             self.liveRequests[index].completionTokens = completionTokensVal
             self.liveRequests[index].response = responseText
             self.liveRequests[index].errorMessage = errorMessage
-            if model != "unknown" {
+            if let model = model {
                 self.liveRequests[index].model = model
             }
         } else {
@@ -560,7 +561,7 @@ final class ProxyServerService: ObservableObject {
 
         // Classify Provider based on path and model name keywords
         let provider: LLMProvider
-        let modelLower = model.lowercased()
+        let modelLower = (model ?? "").lowercased()
         let isLocalModel = modelLower.contains("gguf") ||
                            modelLower.contains("mlx") ||
                            modelLower.contains("local") ||
