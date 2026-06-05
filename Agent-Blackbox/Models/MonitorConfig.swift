@@ -33,6 +33,7 @@ struct MonitorConfig: Codable, Equatable {
             // OpenAI (ChatGPT Desktop)
             home + "/Library/Application Support/com.openai.chat/",
             home + "/Library/Group Containers/group.com.openai.chat/",
+            home + "/.codex/sessions/",
             
             // Gemini (GCloud CLI logs)
             home + "/.config/gcloud/logs/",

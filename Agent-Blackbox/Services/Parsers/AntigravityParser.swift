@@ -128,7 +128,7 @@ struct AntigravityParser: LogParser {
                 }
                 
                 if stepContent.contains("<USER_SETTINGS_CHANGE>") {
-                    if let modelMatch = firstMatch(in: stepContent, pattern: #"Model Selection` from .*? to ([^`\n]+?)(?:\.\s|\.$|$)"#) {
+                    if let modelMatch = firstMatch(in: stepContent, pattern: #"\`?Model Selection\`? from .*? to ([^`\n]+?)(?:\.\s|\.$|$)"#) {
                         currentModelName = modelMatch.trimmingCharacters(in: .whitespacesAndNewlines)
                     }
                 }
@@ -145,7 +145,7 @@ struct AntigravityParser: LogParser {
                 if let modelVal = obj["model"] as? String {
                     if let displayName = availableModels[modelVal] {
                         stepModelName = displayName
-                    } else {
+                    } else if !modelVal.hasPrefix("MODEL_PLACEHOLDER_") && !modelVal.hasPrefix("MODEL_") {
                         stepModelName = modelVal
                     }
                 }
@@ -293,7 +293,18 @@ struct AntigravityParser: LogParser {
     // MARK: - Model Resolution
 
     private func loadAvailableModels() -> [String: String] {
-        var dict: [String: String] = [:]
+        var dict: [String: String] = [
+            "MODEL_PLACEHOLDER_M20": "Gemini 3.5 Flash (Medium)",
+            "MODEL_PLACEHOLDER_M37": "Gemini 3.1 Pro (High)",
+            "MODEL_PLACEHOLDER_M36": "Gemini 3.1 Pro (Low)",
+            "MODEL_PLACEHOLDER_M16": "Gemini 3.1 Pro (High)",
+            "MODEL_PLACEHOLDER_M18": "Gemini 3 Flash",
+            "MODEL_PLACEHOLDER_M84": "Gemini 3 Flash",
+            "MODEL_PLACEHOLDER_M50": "Gemini 3.1 Flash Lite",
+            "MODEL_PLACEHOLDER_M21": "Gemini 3.1 Flash Image",
+            "MODEL_PLACEHOLDER_M35": "Claude Sonnet 4.6 (Thinking)",
+            "MODEL_PLACEHOLDER_M26": "Claude Opus 4.6 (Thinking)"
+        ]
         let home = NSHomeDirectory()
         let modelsFile = home + "/.antigravity_cockpit/cache/available_models.json"
         
@@ -344,6 +355,18 @@ struct AntigravityParser: LogParser {
         if m.contains("claude")  { return .anthropic }
         if m.contains("gpt") || m.contains("openai") { return .openai }
         if m.contains("gemini") || m.contains("g3") || m.contains("g2") { return .google }
+        
+        // Fallback for raw placeholders
+        if m == "model_placeholder_m35" || m == "model_placeholder_m26" {
+            return .anthropic
+        }
+        if m.hasPrefix("model_placeholder_") || m.hasPrefix("model_google_") {
+            return .google
+        }
+        if m.hasPrefix("model_openai_") {
+            return .openai
+        }
+        
         return .antigravity
     }
 }

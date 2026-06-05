@@ -311,7 +311,7 @@ final class ProxyServerService: ObservableObject {
         
         if isCopilot {
             Logger.shared.info("网关代理: 检测到 GitHub Copilot/Codex 请求，自动路由至 GitHub Copilot 上游")
-            return "https://copilot-proxy.githubusercontent.com"
+            return "https://api.githubcopilot.com"
         }
         
         // 4. Default Fallback based on path
@@ -567,7 +567,9 @@ final class ProxyServerService: ObservableObject {
                            modelLower.contains("local") ||
                            (modelLower.contains("/") && !modelLower.hasPrefix("ft:"))
         
-        if isLocalModel {
+        if client == "copilot" {
+            provider = .copilot
+        } else if isLocalModel {
             if modelLower.contains("ollama") {
                 provider = .ollama
             } else {

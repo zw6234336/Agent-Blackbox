@@ -92,6 +92,9 @@ struct CursorVSCDBParser: LogParser {
             guard let bubbles = tab["bubbles"] as? [[String: Any]] else { continue }
             let tabId = tab["tabId"] as? String ?? UUID().uuidString
             
+            let lastSendTimeMs = (tab["lastSendTime"] as? NSNumber)?.doubleValue
+            let tabTimestamp = lastSendTimeMs != nil ? Date(timeIntervalSince1970: lastSendTimeMs! / 1000.0) : fileDate
+            
             var currentPrompt: String? = nil
             
             for bubble in bubbles {
@@ -108,7 +111,7 @@ struct CursorVSCDBParser: LogParser {
                     
                     if let prompt = currentPrompt, let response = response {
                         logs.append(ParsedLog(
-                            timestamp: fileDate,
+                            timestamp: tabTimestamp,
                             sourceFile: url.path,
                             provider: detectProvider(model: modelName, content: nil, sourceFile: url.path),
                             modelName: modelName,
@@ -139,6 +142,9 @@ struct CursorVSCDBParser: LogParser {
             let composerId = composer["composerId"] as? String ?? UUID().uuidString
             guard let conversation = composer["conversation"] as? [[String: Any]] else { continue }
             
+            let createdAtMs = (composer["createdAt"] as? NSNumber)?.doubleValue
+            let composerTimestamp = createdAtMs != nil ? Date(timeIntervalSince1970: createdAtMs! / 1000.0) : fileDate
+            
             var currentPrompt: String? = nil
             
             for msg in conversation {
@@ -154,7 +160,7 @@ struct CursorVSCDBParser: LogParser {
                     
                     if let prompt = currentPrompt, let response = response {
                         logs.append(ParsedLog(
-                            timestamp: fileDate,
+                            timestamp: composerTimestamp,
                             sourceFile: url.path,
                             provider: detectProvider(model: modelName, content: nil, sourceFile: url.path),
                             modelName: modelName,

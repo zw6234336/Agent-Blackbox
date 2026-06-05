@@ -102,7 +102,8 @@ enum LLMProvider: String, Codable, CaseIterable, Identifiable {
         case .openai:
             return [
                 home + "/Library/Application Support/com.openai.chat/",
-                home + "/Library/Group Containers/group.com.openai.chat/"
+                home + "/Library/Group Containers/group.com.openai.chat/",
+                home + "/.codex/sessions/"
             ]
         case .anthropic:
             return [

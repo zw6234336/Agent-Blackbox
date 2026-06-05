@@ -875,39 +875,51 @@ struct DashboardView: View {
     }
 
     private func donutChartView(data: [ProviderDisplayData]) -> some View {
-        // Guard: SectorMark crashes (EXC_BREAKPOINT in Charts/acos) when values are zero or negative
         let safeData = data.filter { $0.displayValue > 0 }
+        
+        // Compute cumulative slices for trim
+        var slices: [(provider: LLMProvider, start: CGFloat, end: CGFloat)] = []
+        var current: CGFloat = 0.0
+        let total = safeData.reduce(0.0) { $0 + $1.displayValue }
+        
+        if total > 0 {
+            for item in safeData {
+                let pct = CGFloat(item.displayValue / total)
+                let start = current
+                let end = current + pct
+                slices.append((provider: item.provider, start: start, end: end))
+                current = end
+            }
+        }
+        
         return Group {
             if safeData.isEmpty {
                 emptyChartPlaceholder("暂无数据")
-            } else if safeData.count == 1 {
-                // SwiftUI SectorMark crashes when there is only a single data point on macOS/iOS SwiftUI Charts.
-                // We fallback to a clean native Circle rendering when safeData contains exactly 1 element.
-                let item = safeData[0]
-                let isSelected = selectedProvider == nil || selectedProvider == item.provider
-                ZStack {
-                    Circle()
-                        .stroke(item.provider.brandColor.opacity(0.12), lineWidth: 16)
-                        .frame(width: 80, height: 80)
-                    Circle()
-                        .trim(from: 0.0, to: 1.0)
-                        .stroke(item.provider.brandColor.gradient, style: StrokeStyle(lineWidth: 16, lineCap: .round))
-                        .frame(width: 80, height: 80)
-                        .rotationEffect(.degrees(-90))
-                }
-                .opacity(isSelected ? 1.0 : 0.35)
             } else {
-                Chart(safeData) { item in
-                    SectorMark(
-                        angle: .value("数值", item.displayValue),
-                        innerRadius: .ratio(0.55),
-                        angularInset: 1.5
-                    )
-                    .foregroundStyle(item.provider.brandColor)
-                    .cornerRadius(4)
-                    .opacity(selectedProvider == nil || selectedProvider == item.provider ? 1.0 : 0.35)
+                ZStack {
+                    // Base background circle
+                    Circle()
+                        .inset(by: 7)
+                        .stroke(Color.primary.opacity(0.05), lineWidth: 14)
+                        .frame(width: 80, height: 80)
+                    
+                    // Slices
+                    ForEach(0..<slices.count, id: \.self) { idx in
+                        let slice = slices[idx]
+                        let isSelected = selectedProvider == nil || selectedProvider == slice.provider
+                        Circle()
+                            .inset(by: 7)
+                            .trim(from: slice.start, to: slice.end)
+                            .stroke(
+                                slice.provider.brandColor.gradient,
+                                style: StrokeStyle(lineWidth: 14, lineCap: .butt)
+                            )
+                            .frame(width: 80, height: 80)
+                            .rotationEffect(.degrees(-90))
+                            .opacity(isSelected ? 1.0 : 0.25)
+                            .animation(.spring(response: 0.3, dampingFraction: 0.75), value: selectedProvider)
+                    }
                 }
-                .chartLegend(.hidden)
             }
         }
     }

@@ -92,6 +92,7 @@ extension LogParser {
             if sourceFile.contains("antigravity") { return .antigravity }
             if sourceFile.contains("/.pi/") || sourceFile.contains("/com.inflection.pi/") { return .pi }
             if sourceFile.contains("dev.warp.warp-stable") || sourceFile.contains("/.warp/") { return .warp }
+            if sourceFile.contains("/.codex/sessions/") { return .openai }
         }
         
         guard let model = model?.lowercased() else {

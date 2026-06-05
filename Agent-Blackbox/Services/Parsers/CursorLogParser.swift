@@ -60,6 +60,10 @@ struct CursorLogParser: LogParser {
                 
                 let validatedModel = ParsedLog.isValidModelName(model) ? model : nil
                 if validatedModel != nil || tokens != nil {
+                    // Filter out extension startup log messages declaring model availability
+                    if line.contains("Available generic completion model") || line.contains("Available custom completion model") {
+                        continue
+                    }
                     results.append(ParsedLog(
                         timestamp: timestamp,
                         sourceFile: url.path,
