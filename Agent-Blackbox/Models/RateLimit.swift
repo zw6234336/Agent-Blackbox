@@ -299,8 +299,8 @@ struct ProviderRateLimit: Codable, Hashable {
         for p in LLMProvider.allCases {
             switch p {
 
-            // ── OpenAI 直接 API ──────────────────────────────────────────
-            case .openai:
+            // ── OpenAI 直接 API / Codex ──────────────────────────────────
+            case .openai, .codex:
                 dict[p.rawValue] = .defaultOpenAITier1
 
             // ── GitHub Copilot Pro ──────────────────────────────────────

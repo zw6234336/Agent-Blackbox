@@ -122,6 +122,16 @@ final class DatabaseService: ObservableObject {
     }
 
     private func migrateSchema() {
+        // Check which columns already exist to avoid SQLite error logs / warnings
+        var existingColumns = Set<String>()
+        if let stmt = try? db?.prepare("PRAGMA table_info(logs)") {
+            for row in stmt {
+                if let name = row[1] as? String {
+                    existingColumns.insert(name)
+                }
+            }
+        }
+
         // Safely add columns that might not exist in older databases
         let columnsToAdd: [(String, String)] = [
             ("provider", "TEXT"),
@@ -138,10 +148,12 @@ final class DatabaseService: ObservableObject {
         ]
 
         for (col, type) in columnsToAdd {
-            do {
-                try db?.run("ALTER TABLE logs ADD COLUMN \(col) \(type)")
-            } catch {
-                // Column likely already exists, ignore
+            if !existingColumns.contains(col) {
+                do {
+                    try db?.run("ALTER TABLE logs ADD COLUMN \(col) \(type)")
+                } catch {
+                    // Column likely already exists, ignore
+                }
             }
         }
 

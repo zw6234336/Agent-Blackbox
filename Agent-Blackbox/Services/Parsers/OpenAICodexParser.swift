@@ -1,7 +1,7 @@
 import Foundation
 
 struct OpenAICodexParser: LogParser {
-    let supportedProvider: LLMProvider = .openai
+    let supportedProvider: LLMProvider = .codex
     
     func canParse(url: URL, content: String) -> Bool {
         let path = url.path.lowercased()

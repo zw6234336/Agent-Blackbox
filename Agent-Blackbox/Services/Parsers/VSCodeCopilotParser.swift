@@ -49,7 +49,7 @@ struct VSCodeCopilotParser: LogParser {
         }
         
         do {
-            let db = try Connection(tempDBURL.path, readonly: true)
+            let db = try Connection(tempDBURL.path, readonly: false)
             
             let turnsTable = Table("turns")
             let sessionIdCol = Expression<String>("session_id")

@@ -49,7 +49,7 @@ struct CursorVSCDBParser: LogParser {
         }
         
         do {
-            let db = try Connection(tempDBURL.path, readonly: true)
+            let db = try Connection(tempDBURL.path, readonly: false)
             // The table is `ItemTable`
             // Columns: key (TEXT), value (TEXT)
             let itemTable = Table("ItemTable")

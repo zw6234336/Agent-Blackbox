@@ -92,7 +92,7 @@ extension LogParser {
             if sourceFile.contains("antigravity") { return .antigravity }
             if sourceFile.contains("/.pi/") || sourceFile.contains("/com.inflection.pi/") { return .pi }
             if sourceFile.contains("dev.warp.warp-stable") || sourceFile.contains("/.warp/") { return .warp }
-            if sourceFile.contains("/.codex/sessions/") { return .openai }
+            if sourceFile.contains("/.codex/sessions/") { return .codex }
         }
         
         guard let model = model?.lowercased() else {
@@ -119,6 +119,7 @@ extension LogParser {
             return .lmstudio
         }
         
+        if model.contains("codex") { return .codex }
         if model.contains("gpt") || model.contains("o1") || model.contains("o3") || model.contains("o4") { return .openai }
         if model.contains("claude") { return .anthropic }
         if model.contains("gemini") || model.contains("palm") { return .google }

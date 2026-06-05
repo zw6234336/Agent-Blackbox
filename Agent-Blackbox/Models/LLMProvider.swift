@@ -19,6 +19,7 @@ enum LLMProvider: String, Codable, CaseIterable, Identifiable {
     case amp
     case antigravity
     case pi
+    case codex
     case custom
     
     var id: String { rawValue }
@@ -43,6 +44,7 @@ enum LLMProvider: String, Codable, CaseIterable, Identifiable {
         case .amp: return "Amp (Sourcegraph)"
         case .antigravity: return "Antigravity (Google)"
         case .pi: return "Pi (Inflection)"
+        case .codex: return "Codex"
         case .custom: return "自定义"
         }
     }
@@ -67,6 +69,7 @@ enum LLMProvider: String, Codable, CaseIterable, Identifiable {
         case .amp: return "bolt.shield.fill"
         case .antigravity: return "arrow.up.circle.fill"
         case .pi: return "heart.circle"
+        case .codex: return "curlybraces"
         case .custom: return "gearshape"
         }
     }
@@ -91,6 +94,7 @@ enum LLMProvider: String, Codable, CaseIterable, Identifiable {
         case .amp: return Color(hue: 0.85, saturation: 0.85, brightness: 0.85)
         case .antigravity: return Color(hue: 0.58, saturation: 0.9, brightness: 0.85)
         case .pi: return Color(hue: 0.02, saturation: 0.85, brightness: 0.75)
+        case .codex: return Color(hue: 0.75, saturation: 0.85, brightness: 0.85)
         case .custom: return Color(hue: 0.0, saturation: 0.0, brightness: 0.6)
         }
     }
@@ -102,7 +106,10 @@ enum LLMProvider: String, Codable, CaseIterable, Identifiable {
         case .openai:
             return [
                 home + "/Library/Application Support/com.openai.chat/",
-                home + "/Library/Group Containers/group.com.openai.chat/",
+                home + "/Library/Group Containers/group.com.openai.chat/"
+            ]
+        case .codex:
+            return [
                 home + "/.codex/sessions/"
             ]
         case .anthropic:

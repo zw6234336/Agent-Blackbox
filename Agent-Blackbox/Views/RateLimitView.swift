@@ -1055,6 +1055,7 @@ extension LLMProvider {
         case .amp: return "Amp"
         case .antigravity: return "Antigra…"
         case .pi: return "Pi"
+        case .codex: return "Codex"
         case .custom: return "Custom"
         }
     }
